@@ -16,7 +16,7 @@ def clear_screen():
 
 def print_banner():
     banner = r"""
- 🅹🆂-🆂🅴🅲🆁🅴🆃🆂 
+ JS-SECRETS 
     """
     print(Fore.GREEN + banner)
 
