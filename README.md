@@ -9,7 +9,7 @@ find secrets in js urls
 
 [*] usage   :
 
-`python js-secrets.py -l urls.txt -w 12`
+`python js-secrets.py -l urls.txt -w 12`  
 -w : workers number
 
 [*] note    :  
