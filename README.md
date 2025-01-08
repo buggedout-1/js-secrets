@@ -3,8 +3,8 @@ find secrets in js urls
 
 [*] install : 
 
-`git clone https://github.com/buggedout-1/js-secrets.git`
-`cd js-secrets`
+`git clone https://github.com/buggedout-1/js-secrets.git`  
+`cd js-secrets`  
 `pip install -r requirements.txt`
 
 [*] usage   :
