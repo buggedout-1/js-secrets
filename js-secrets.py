@@ -41,6 +41,7 @@ def extract_secrets(page_content):
     'API Access Token': r'(?i)\bAPI\s*Access\s*Token\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
     'Public API Key': r'(?i)Public\s*API\s*Key\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
     'Private API Key': r'(?i)Private\s*API\s*Key\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
+    'Coveo Search API Key': r'(?i)\bCOVEO_SEARCH_API_KEY\s*[:=]\s*[\'"]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[\'"]?',    
     'API Key (Secure)': r'(?i)API\s*Key\s*\(Secure\)\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
     'Custom API Key': r'(?i)Custom\s*API\s*Key\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
     'API Authorization Key': r'(?i)API\s*Authorization\s*Key\s*[:=]?\s*[\'"]?([A-Za-z0-9_-]{32,})[\'"]?',
