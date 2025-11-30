@@ -6,42 +6,76 @@ import argparse
 import json
 import os
 import sys
+import urllib3
 from colorama import Fore, Style, init
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Initialize Colorama
 init(autoreset=True)
 
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 secret_patterns = {}
 
 def print_banner():
-    banner = r"""
-     ██╗███████╗      ███████╗███████╗ ██████╗██████╗ ███████╗████████╗███████╗
-     ██║██╔════╝      ██╔════╝██╔════╝██╔════╝██╔══██╗██╔════╝╚══██╔══╝██╔════╝
-     ██║███████╗█████╗███████╗█████╗  ██║     ██████╔╝█████╗     ██║   ███████╗
-██   ██║╚════██║╚════╝╚════██║██╔══╝  ██║     ██╔══██╗██╔══╝     ██║   ╚════██║
-╚█████╔╝███████║      ███████║███████╗╚██████╗██║  ██║███████╗   ██║   ███████║
- ╚════╝ ╚══════╝      ╚══════╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝
-                                                                               by buggedout
-    """
-    print(Fore.GREEN + banner)
+    banner = f"""
+{Fore.CYAN}    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                                                                   ║
+    ║  {Fore.YELLOW} ▐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██╗███████╗      ███████╗███████╗ ██████╗{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██║██╔════╝      ██╔════╝██╔════╝██╔════╝{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██║███████╗█████╗███████╗█████╗  ██║     {Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE}██   ██║╚════██║╚════╝╚════██║██╔══╝  ██║     {Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE}╚█████╔╝███████║      ███████║███████╗╚██████╗{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐  {Fore.WHITE} ╚════╝ ╚══════╝      ╚══════╝╚══════╝ ╚═════╝{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
+    ║  {Fore.YELLOW} ▐▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▌ {Fore.CYAN}    ║
+    ║                                                                   ║
+    ║  {Fore.GREEN}  ░▒▓ JavaScript Secret Scanner ▓▒░{Fore.CYAN}                              ║
+    ║  {Fore.WHITE}  Extract API keys, tokens & credentials from JS files{Fore.CYAN}           ║
+    ║                                                                   ║
+    ║  {Fore.MAGENTA}  Author:{Fore.WHITE} buggedout{Fore.CYAN}                                              ║
+    ║  {Fore.MAGENTA}  Version:{Fore.WHITE} 2.0{Fore.CYAN}                                                   ║
+    ║  {Fore.MAGENTA}  GitHub:{Fore.WHITE} github.com/buggedout-1/js-secrets{Fore.CYAN}                      ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+{Style.RESET_ALL}"""
+    print(banner)
 
 def load_patterns(pattern_file):
     global secret_patterns
     try:
-        with open(pattern_file, 'r') as f:
+        with open(pattern_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         for line in lines:
-            if ':' not in line:
+            line = line.strip()
+            # Skip empty lines and comments
+            if not line or line.startswith('#'):
                 continue
-            line = line.strip().rstrip(',')
-            key, value = line.split(':', 1)
-            key = key.strip().strip('"').strip("'")
-            value = eval(value.strip(), {'re': re})
-            secret_patterns[key] = value
+            # Skip lines that don't look like pattern definitions
+            if not line.startswith("'") and not line.startswith('"'):
+                continue
+            line = line.rstrip(',')
+            # Find the pattern name (between quotes) and value (after the colon)
+            # Pattern format: 'Name': r'regex'
+            match = re.match(r'^[\'"](.+?)[\'"]\s*:\s*(.+)$', line)
+            if match:
+                key = match.group(1)
+                value_str = match.group(2).strip()
+                try:
+                    value = eval(value_str, {'re': re})
+                    secret_patterns[key] = value
+                except Exception as e:
+                    print(Fore.YELLOW + f"[!] Error parsing pattern '{key}': {e}")
     except Exception as e:
         print(Fore.RED + f"[!] Error loading pattern file: {e}")
         sys.exit(1)
+
+    print(Fore.CYAN + f"[*] Loaded {len(secret_patterns)} patterns.")
 
 def extract_secrets(page_content):
     secrets_found = {}
@@ -58,8 +92,8 @@ def scan_url(url, current_index, total_urls):
     try:
         sys.stdout.write(f"\rLoading URL {current_index} of {total_urls}...")
         sys.stdout.flush()
-        
-        response = requests.get(url, timeout=10)
+
+        response = requests.get(url, timeout=15, verify=False)
         if response.status_code == 200:
             page_content = response.text
             secrets = extract_secrets(page_content)
@@ -68,8 +102,8 @@ def scan_url(url, current_index, total_urls):
                     'url': url,
                     'secrets': secrets
                 }
-    except requests.exceptions.RequestException:
-        pass
+    except requests.exceptions.RequestException as e:
+        print(Fore.RED + f"\n[!] Error fetching {url}: {e}")
     return None
 
 def save_to_json_immediately(results, output_file='secrets.json'):
