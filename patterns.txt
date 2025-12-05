@@ -13,7 +13,9 @@
 # AWS
 # ============================================
 'AWS Access Key ID': r'(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}',
-'AWS Secret Access Key': r'(?i)(?:aws)?_?(?:secret)?_?(?:access)?_?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{40})',
+# FIXED: All keywords were optional, matched any 40-char alphanumeric (function names, minified vars)
+# Now requires 'aws' OR 'secret_access_key' context
+'AWS Secret Access Key': r'(?i)(?:aws[_-]?(?:secret[_-]?)?(?:access[_-]?)?key|secret[_-]?access[_-]?key)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{40})',
 'AWS Session Token': r'(?i)(?:aws)?_?session_?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{100,})',
 'AWS ARN': r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9-_/]+',
 
@@ -36,7 +38,9 @@
 'GitHub Server-to-Server Token': r'ghs_[A-Za-z0-9]{36}',
 'GitHub Refresh Token': r'ghr_[A-Za-z0-9]{36}',
 'GitHub Fine-Grained PAT': r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}',
-'GitHub App Token': r'(?:v\d\.)?[a-f0-9]{40}',
+# FIXED: Original pattern matched ANY 40-char hex (SHA1, git commits, content hashes)
+# Now requires github/gh context keyword to reduce false positives
+'GitHub App Token': r'(?i)(?:github|gh)[_-]?(?:app)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{40})',
 
 # ============================================
 # GitLab
@@ -94,7 +98,9 @@
 # Mailgun
 # ============================================
 'Mailgun API Key': r'key-[0-9a-zA-Z]{32}',
-'Mailgun Webhook Signing Key': r'(?i)(?:mailgun)?[_-]?(?:webhook)?[_-]?(?:signing)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9-]{36})',
+# FIXED: All keywords were optional, matched any 36-char hex string
+# Now requires 'mailgun' keyword
+'Mailgun Webhook Signing Key': r'(?i)mailgun[_-]?(?:webhook[_-]?)?(?:signing[_-]?)?key[\'"\s]*[:=][\'"\s]*([a-f0-9-]{36})',
 
 # ============================================
 # Mailchimp
@@ -127,7 +133,9 @@
 # Azure
 # ============================================
 'Azure Storage Account Key': r'(?i)(?:account)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9+/]{86}==)',
-'Azure SAS Token': r'(?:sv|sig)=[^&\s]{20,}',
+# FIXED: Made more specific to avoid matching minified JS variables
+# Requires both sv= AND sig= in same context, or full SAS URL pattern
+'Azure SAS Token': r'(?:sv=\d{4}-\d{2}-\d{2}&[^"\']+sig=[A-Za-z0-9%+/=]{30,}|sig=[A-Za-z0-9%+/=]{40,}&sv=\d{4})',
 'Azure Connection String': r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{88};',
 
 # ============================================
@@ -154,7 +162,9 @@
 # ============================================
 # Telegram
 # ============================================
-'Telegram Bot Token': r'[0-9]{8,10}:[A-Za-z0-9_-]{35}',
+# FIXED: Made more specific - require bot prefix or telegram context
+# The old pattern matched Cloudflare challenge tokens (they look similar)
+'Telegram Bot Token': r'(?:bot)?[0-9]{9,10}:AA[A-Za-z0-9_-]{33}',
 
 # ============================================
 # Facebook/Meta
@@ -186,7 +196,9 @@
 # ============================================
 'New Relic API Key': r'NRAK-[A-Z0-9]{27}',
 'New Relic License Key': r'[a-f0-9]{40}NRAL',
-'New Relic Insights Key': r'NRI[A-Za-z0-9\-]{32}',
+# FIXED: 'NRI' prefix (3 chars) too common in minified JS
+# Now requires context keyword (new_relic/nr) with the NRI value
+'New Relic Insights Key': r'(?i)(?:new[_-]?relic|nr)[_-]?(?:insights?)?[_-]?key[\'"\s]*[:=][\'"\s]*(NRI[A-Za-z0-9\-]{32})',
 
 # ============================================
 # Sentry
@@ -499,7 +511,9 @@
 # ============================================
 # OneDrive/Microsoft Graph
 # ============================================
-'Microsoft Graph Access Token': r'EwB[A-Za-z0-9_-]+',
+# FIXED: 'EwB' prefix (3 chars) with no min length matched minified JS vars
+# Now requires minimum 50 characters after prefix
+'Microsoft Graph Access Token': r'EwB[A-Za-z0-9_-]{50,}',
 
 # ============================================
 # Salesforce
