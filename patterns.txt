@@ -1,15 +1,4 @@
 # ============================================
-# Generic API Keys and Secrets
-# ============================================
-'Generic API Key': r'(?i)(?:api[_-]?key|apikey)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{20,})[\'"]',
-'Generic Secret Key': r'(?i)(?:secret[_-]?key|secretkey)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{20,})[\'"]',
-'Generic Access Token': r'(?i)(?:access[_-]?token|accesstoken)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{20,})[\'"]',
-'Generic Auth Token': r'(?i)(?:auth[_-]?token|authtoken)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{20,})[\'"]',
-'Generic Private Key': r'(?i)(?:private[_-]?key|privatekey)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{20,})[\'"]',
-'Generic Client Secret': r'(?i)(?:client[_-]?secret|clientsecret)\s*[:=]\s*[\'"]([a-zA-Z0-9_\-]{32,})[\'"]',
-'Generic Password': r'(?i)(?:password|passwd|pwd)\s*[:=]\s*[\'"]([^\'"/@]{8,64})[\'"]',
-
-# ============================================
 # AWS
 # ============================================
 'AWS Access Key ID': r'(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}',
@@ -20,14 +9,24 @@
 'AWS ARN': r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9-_/]+',
 
 # ============================================
-# Google/GCP
+# Google/GCP (excluding public Maps API keys)
 # ============================================
-'Google API Key': r'AIza[0-9A-Za-z\-_]{35}',
+# Removed: 'Google API Key': r'AIza[0-9A-Za-z\-_]{35}' - Often public/intended to be exposed
 'Google OAuth Client ID': r'[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com',
 'Google OAuth Client Secret': r'(?i)google[_-]?(?:client[_-]?)?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{24})',
 'Google Cloud Service Account': r'(?i)\"type\"\s*:\s*\"service_account\"',
 'Firebase URL': r'https://[a-z0-9-]+\.firebaseio\.com',
-'Firebase API Key': r'(?i)(?:firebase|FIREBASE)[_-]?(?:API[_-]?KEY|apiKey)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{39})',
+# Removed: Firebase API Key - uses same AIza prefix as Google, often public
+
+# Google Docs/Drive URLs (can expose sensitive documents)
+'Google Docs Spreadsheet': r'docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Document': r'docs\.google\.com/document/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs File': r'docs\.google\.com/file/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Folder': r'docs\.google\.com/folder/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Form': r'docs\.google\.com/forms/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Presentation': r'docs\.google\.com/presentation/d/([a-zA-Z0-9_-]{25,})',
+'Google Drive Folder': r'drive\.google\.com/drive/folders/([a-zA-Z0-9_-]{25,})',
+'Google Drive File': r'drive\.google\.com/file/d/([a-zA-Z0-9_-]{25,})',
 
 # ============================================
 # GitHub
@@ -86,7 +85,7 @@
 # Twilio
 # ============================================
 'Twilio Account SID': r'AC[a-f0-9]{32}',
-'Twilio Auth Token': r'(?i)(?:twilio)?[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+'Twilio Auth Token': r'(?i)twilio[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
 'Twilio API Key SID': r'SK[a-f0-9]{32}',
 
 # ============================================
@@ -162,20 +161,15 @@
 # ============================================
 # Telegram
 # ============================================
-# FIXED: Made more specific - require bot prefix or telegram context
-# The old pattern matched Cloudflare challenge tokens (they look similar)
+
 'Telegram Bot Token': r'(?:bot)?[0-9]{9,10}:AA[A-Za-z0-9_-]{33}',
 
-# ============================================
-# Facebook/Meta
-# ============================================
-'Facebook Access Token': r'EAA[MC][a-zA-Z0-9]+',
-'Facebook Client ID': r'(?i)(?:facebook|fb)[_-]?(?:app)?[_-]?(?:id|client)[\'"\s]*[:=][\'"\s]*([0-9]{15,16})',
+
 
 # ============================================
 # Twitter/X
 # ============================================
-'Twitter Bearer Token': r'AAAAAAAAAAAAAAAAAAAAAA[A-Za-z0-9%]{30,}',
+
 'Twitter API Key': r'(?i)(?:twitter|tw)[_-]?(?:api)?[_-]?(?:key|consumer)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{25})',
 'Twitter API Secret': r'(?i)(?:twitter|tw)[_-]?(?:api)?[_-]?(?:secret)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{50})',
 
@@ -255,9 +249,12 @@
 'JSON Web Token': r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*',
 
 # ============================================
-# Bearer Token
+# Authorization Headers (Basic & Bearer)
 # ============================================
 'Authorization Bearer Token': r'(?i)(?:authorization|bearer)[\'"\s]*[:=][\'"\s]*bearer\s+([A-Za-z0-9_\-\.]+)',
+'Authorization Basic Token': r'(?i)(?:authorization)[\'"\s]*[:=][\'"\s]*basic\s+([A-Za-z0-9+/=]{20,})',
+'Basic Auth Header': r'(?i)Basic\s+([A-Za-z0-9+/=]{20,})',
+'Bearer Auth Header': r'(?i)Bearer\s+([A-Za-z0-9_\-\.]{20,})',
 
 # ============================================
 # Private Keys
@@ -537,27 +534,7 @@
 'Cloudinary URL': r'cloudinary://[0-9]+:[A-Za-z0-9_-]+@[a-z0-9-]+',
 
 # ============================================
-# Minified JS / CamelCase Patterns
-# (For bundled/minified JavaScript files)
-# Note: \s* allows optional whitespace, [,:] matches colon or comma
-# ============================================
-'JS clientId': r'["\']?clientId["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS clientSecret': r'["\']?clientSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS apiKey': r'["\']?apiKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS apiSecret': r'["\']?apiSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS secretKey': r'["\']?secretKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS accessToken': r'["\']?accessToken["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS authToken': r'["\']?authToken["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS privateKey': r'["\']?privateKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS refreshToken': r'["\']?refreshToken["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS bearerToken': r'["\']?bearerToken["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS appId': r'["\']?appId["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{15,})["\']',
-'JS appSecret': r'["\']?appSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS appKey': r'["\']?appKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS consumerKey': r'["\']?consumerKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-'JS consumerSecret': r'["\']?consumerSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
-
-# Service-specific camelCase patterns
+# Minified JS / CamelCase Patterns (Service-specific only)
 'JS stripeKey': r'["\']?stripeKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
 'JS stripeSecret': r'["\']?stripeSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
 'JS awsAccessKey': r'["\']?awsAccessKey(?:Id)?["\']?\s*[,:]\s*["\']([A-Z0-9]{20})["\']',
@@ -572,3 +549,140 @@
 'JS discordToken': r'["\']?discordToken["\']?\s*[,:]\s*["\']([MN][A-Za-z0-9]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27})["\']',
 'JS openaiApiKey': r'["\']?openaiApiKey["\']?\s*[,:]\s*["\'](sk-[A-Za-z0-9]{48})["\']',
 'JS anthropicApiKey': r'["\']?anthropicApiKey["\']?\s*[,:]\s*["\'](sk-ant-[A-Za-z0-9_-]+)["\']',
+
+# ============================================
+# NEW HIGH PRIORITY PATTERNS (2025)
+# ============================================
+
+# --------------------------------------------
+# Cloud/DevOps Infrastructure
+# --------------------------------------------
+'Terraform Cloud Token': r'[a-zA-Z0-9]{14}\.atlasv1\.[a-zA-Z0-9_-]{60,}',
+'Docker Hub Personal Access Token': r'dckr_pat_[A-Za-z0-9_-]{27,}',
+'Kubernetes Service Account Token': r'eyJhbGciOi[A-Za-z0-9_-]+\.eyJpc3MiOiJrdWJlcm5ldGVz[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+'Linode API Token': r'(?i)linode[_-]?(?:api)?[_-]?(?:token|key)[\'"\s]*[:=][\'"\s]*([0-9a-f]{64})',
+'Vultr API Key': r'(?i)vultr[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Z0-9]{36})',
+
+# --------------------------------------------
+# AI/ML Services (Growing Fast in 2025)
+# --------------------------------------------
+'Hugging Face Token': r'hf_[a-zA-Z0-9]{34,}',
+'Replicate API Token': r'r8_[a-zA-Z0-9]{40,}',
+'Cohere API Key': r'(?i)cohere[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{40})',
+'Together AI Key': r'(?i)together[_-]?(?:ai)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{64})',
+
+# --------------------------------------------
+# CI/CD Systems
+# --------------------------------------------
+'GitLab CI Job Token': r'glcbt-[A-Za-z0-9]{20,}',
+'Bitbucket App Password': r'ATBB[a-zA-Z0-9]{32,}',
+'Bitbucket Access Token': r'(?i)bitbucket[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{20,})',
+'Drone CI Token': r'(?i)drone[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{32,})',
+
+# --------------------------------------------
+# Payment Processors (International)
+# --------------------------------------------
+'Razorpay Key ID': r'rzp_(?:live|test)_[a-zA-Z0-9]{14,}',
+'Razorpay Key Secret': r'(?i)razorpay[_-]?(?:key)?[_-]?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{20,})',
+# FIXED: AQE is common in base64, require 'adyen' context to avoid false positives
+'Adyen API Key': r'(?i)adyen[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*(AQE[a-zA-Z0-9_-]{40,})',
+# FIXED: Use negative lookbehind to avoid matching Stripe keys (pk_live_, sk_live_, etc.)
+'Mollie API Key': r'(?<![a-zA-Z_])(?:live|test)_[a-zA-Z0-9]{30,}',
+'Wise API Token': r'(?i)(?:wise|transferwise)[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+'Flutterwave Secret Key': r'FLWSECK(?:_TEST)?-[a-zA-Z0-9]{32,}',
+'Paystack Secret Key': r'sk_(?:live|test)_[a-zA-Z0-9]{40,}',
+
+# --------------------------------------------
+# Communication Platforms
+# --------------------------------------------
+'Microsoft Teams Webhook': r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-zA-Z0-9-]+/IncomingWebhook/[a-zA-Z0-9]+/[a-zA-Z0-9-]+',
+'Mattermost Webhook': r'https://[a-zA-Z0-9.-]+/hooks/[a-zA-Z0-9]+',
+'Rocket.Chat Token': r'(?i)rocketchat[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Databases (Additional)
+# --------------------------------------------
+'CockroachDB Connection String': r'cockroachdb://[^\s\'"<>]+',
+'InfluxDB Token': r'(?i)influx(?:db)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_=-]{80,})',
+# FIXED: 'fn' is extremely common in minified JS, require 'fauna' context
+'Fauna Secret Key': r'(?i)fauna[_-]?(?:secret)?[_-]?(?:key)?[\'"\s]*[:=][\'"\s]*(fn[a-zA-Z0-9_-]{40,})',
+'PlanetScale Token': r'pscale_tkn_[a-zA-Z0-9_-]{40,}',
+'PlanetScale OAuth Token': r'pscale_oauth_[a-zA-Z0-9_-]{40,}',
+'Neon Database Token': r'(?i)neon[_-]?(?:db)?[_-]?(?:api)?[_-]?(?:key|token)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{60,})',
+'Supabase Service Role Key': r'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+',
+'Upstash Redis Token': r'(?i)upstash[_-]?(?:redis)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_=-]{40,})',
+
+# --------------------------------------------
+# Social Media APIs
+# --------------------------------------------
+'TikTok Access Token': r'(?i)tiktok[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{60,})',
+'Reddit Client Secret': r'(?i)reddit[_-]?(?:client)?[_-]?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{22,})',
+'Pinterest Access Token': r'(?i)pinterest[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Enterprise/B2B
+# --------------------------------------------
+'ServiceNow Credentials': r'(?i)servicenow[_-]?(?:password|secret|token)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_!@#$%^&*-]{8,})',
+'Workday API Token': r'(?i)workday[_-]?(?:api)?[_-]?(?:token|key)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Additional Cloud Providers
+# --------------------------------------------
+'Oracle Cloud API Key': r'(?i)oracle[_-]?(?:cloud)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+'IBM Cloud API Key': r'(?i)ibm[_-]?(?:cloud)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# ============================================
+# GENERIC KEYWORD PATTERNS (saved to passwords.json)
+# ============================================
+# These catch any *key*, *secret*, *token*, etc. patterns
+# Prefix with "Generic:" to route to passwords.json
+# Patterns match both JS (key: "value") and JSON ("key":"value") formats
+
+# Password patterns (most important)
+'Generic:password': r'(?i)["\']?[a-zA-Z0-9_-]*password[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:passwd': r'(?i)["\']?[a-zA-Z0-9_-]*passwd["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:pass': r'(?i)["\']?[a-zA-Z0-9_-]*_pass["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:pwd': r'(?i)["\']?[a-zA-Z0-9_-]*pwd["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+
+# Username patterns
+'Generic:username': r'(?i)["\']?[a-zA-Z0-9_-]*user[_-]?name[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:login': r'(?i)["\']?[a-zA-Z0-9_-]*login[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+
+# Credential patterns
+'Generic:credential': r'(?i)["\']?[a-zA-Z0-9_-]*credential[s]?["\']?\s*[:=]\s*\[?\s*["\']([^"\']{3,})["\']',
+'Generic:demo_credentials': r'(?i)["\']?demo[_-]?credentials["\']?\s*[:=]\s*\[\s*["\']([^"\']+)["\']\s*,\s*["\']([^"\']+)["\']',
+
+# API patterns
+'Generic:api_key': r'(?i)["\']?[a-zA-Z0-9_-]*api[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:apikey': r'(?i)["\']?apikey["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:api_secret': r'(?i)["\']?[a-zA-Z0-9_-]*api[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Key patterns
+'Generic:secret_key': r'(?i)["\']?[a-zA-Z0-9_-]*secret[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:private_key': r'(?i)["\']?[a-zA-Z0-9_-]*private[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:access_key': r'(?i)["\']?[a-zA-Z0-9_-]*access[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:auth_key': r'(?i)["\']?[a-zA-Z0-9_-]*auth[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Secret patterns
+'Generic:secret': r'(?i)["\']?[a-zA-Z0-9_-]*secret["\']?\s*[:=]\s*["\']([^"\']{6,})["\']',
+'Generic:app_secret': r'(?i)["\']?[a-zA-Z0-9_-]*app[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:client_secret': r'(?i)["\']?[a-zA-Z0-9_-]*client[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Token patterns
+'Generic:token': r'(?i)["\']?[a-zA-Z0-9_-]*token["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:access_token': r'(?i)["\']?[a-zA-Z0-9_-]*access[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:refresh_token': r'(?i)["\']?[a-zA-Z0-9_-]*refresh[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:auth_token': r'(?i)["\']?[a-zA-Z0-9_-]*auth[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:bearer_token': r'(?i)["\']?[a-zA-Z0-9_-]*bearer[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:session_token': r'(?i)["\']?[a-zA-Z0-9_-]*session[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:register_token': r'(?i)["\']?[a-zA-Z0-9_-]*register[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+
+# Auth patterns
+'Generic:auth': r'(?i)["\']?[a-zA-Z0-9_-]*auth["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:authorization': r'(?i)["\']?authorization["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Connection strings
+'Generic:connection_string': r'(?i)["\']?[a-zA-Z0-9_-]*connection[_-]?string["\']?\s*[:=]\s*["\']([^"\']{20,})["\']',
+'Generic:database_url': r'(?i)["\']?[a-zA-Z0-9_-]*database[_-]?url["\']?\s*[:=]\s*["\']([^"\']{15,})["\']',
+
+
