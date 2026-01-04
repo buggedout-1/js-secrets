@@ -77,59 +77,6 @@ def load_patterns(pattern_file):
 
     print(Fore.CYAN + f"[*] Loaded {len(secret_patterns)} patterns.")
 
-# Generic secret keywords to search for (key-value extraction)
-# These will extract "keyword": "value" or keyword = "value" patterns
-GENERIC_SECRET_KEYWORDS = [
-    # API Keys
-    'apikey', 'api_key', 'api-key', 'apiKey',
-    'api_secret', 'apisecret', 'apiSecret', 'api-secret',
-
-    # Tokens
-    'token', 'access_token', 'accesstoken', 'accessToken', 'access-token',
-    'auth_token', 'authtoken', 'authToken', 'auth-token',
-    'bearer_token', 'bearertoken', 'bearerToken', 'bearer-token',
-    'refresh_token', 'refreshtoken', 'refreshToken', 'refresh-token',
-    'id_token', 'idtoken', 'idToken', 'id-token',
-    'session_token', 'sessiontoken', 'sessionToken', 'session-token',
-
-    # Secrets
-    'secret', 'secret_key', 'secretkey', 'secretKey', 'secret-key',
-    'client_secret', 'clientsecret', 'clientSecret', 'client-secret',
-    'app_secret', 'appsecret', 'appSecret', 'app-secret',
-
-    # Passwords
-    'password', 'passwd', 'pwd', 'pass',
-
-    # Keys
-    'private_key', 'privatekey', 'privateKey', 'private-key',
-    'public_key', 'publickey', 'publicKey', 'public-key',
-    'encryption_key', 'encryptionkey', 'encryptionKey', 'encryption-key',
-    'signing_key', 'signingkey', 'signingKey', 'signing-key',
-
-    # Service-specific keywords
-    'github_token', 'githubtoken', 'githubToken', 'github-token',
-    'gitlab_token', 'gitlabtoken', 'gitlabToken', 'gitlab-token',
-    'aws_key', 'awskey', 'awsKey', 'aws-key',
-    'aws_secret', 'awssecret', 'awsSecret', 'aws-secret',
-    'stripe_key', 'stripekey', 'stripeKey', 'stripe-key',
-    'slack_token', 'slacktoken', 'slackToken', 'slack-token',
-    'discord_token', 'discordtoken', 'discordToken', 'discord-token',
-    'firebase_key', 'firebasekey', 'firebaseKey', 'firebase-key',
-    'google_key', 'googlekey', 'googleKey', 'google-key',
-    'openai_key', 'openaikey', 'openaiKey', 'openai-key',
-    'database_url', 'databaseurl', 'databaseUrl', 'database-url',
-    'db_password', 'dbpassword', 'dbPassword', 'db-password',
-    'redis_url', 'redisurl', 'redisUrl', 'redis-url',
-    'mongo_uri', 'mongouri', 'mongoUri', 'mongo-uri',
-
-    # Credentials
-    'credentials', 'creds', 'auth', 'authorization',
-    'client_id', 'clientid', 'clientId', 'client-id',
-    'app_id', 'appid', 'appId', 'app-id',
-    'consumer_key', 'consumerkey', 'consumerKey', 'consumer-key',
-    'consumer_secret', 'consumersecret', 'consumerSecret', 'consumer-secret',
-]
-
 # False positive indicators - skip matches containing these
 FALSE_POSITIVE_INDICATORS = [
     'cdn-cgi',                    # Cloudflare challenge scripts
@@ -148,16 +95,175 @@ FALSE_POSITIVE_INDICATORS = [
     'RegExp',                     # RegExp constructor
 ]
 
+# Known public keys / non-secret patterns to skip
+PUBLIC_KEY_PATTERNS = [
+    r'^6L[a-zA-Z0-9_-]{20,40}$',  # Google reCAPTCHA site keys (public) - various lengths
+    # Note: Stripe publishable keys (pk_test_, pk_live_) are NOT filtered
+    # because while they're technically "public", finding them in JS files
+    # can still indicate exposed API integration that should be audited
+]
+
+# Placeholder/test/example values to skip
+PLACEHOLDER_INDICATORS = [
+    'your-', 'your_', 'your ',     # Placeholder indicators
+    'replace', 'change-me', 'changeme',
+    'example', 'sample', 'dummy', 'fake',
+    'test_', 'test-', 'testing',
+    'placeholder', 'todo', 'fixme',
+    'xxx', 'yyy', 'zzz',
+    'enter-', 'enter_', 'insert-', 'insert_',
+    'my-api', 'my_api', 'myapi',
+    '<your', '[your', '{your',
+    'not_a_real', 'not-a-real', 'notareal',  # Placeholder passwords
+    'bearer_token', 'api_token', 'api_key_here',  # Common placeholders
+    'username:password',           # MongoDB/URL placeholder
+]
+
+# Values that are EXACT matches to skip (not substring)
+EXACT_FALSE_POSITIVES = [
+    # Fetch API credentials options
+    'include', 'omit', 'same-origin',
+    # HTML input types
+    'text', 'password',
+    # Common non-secret values
+    'true', 'false', 'null', 'undefined',
+    # Common JS values
+    'get', 'post', 'put', 'delete', 'patch',
+    # Common UI labels (English)
+    'username', 'password', 'login', 'logout', 'sign in', 'sign out',
+    'current password', 'new password', 'save password', 'change password',
+    'confirm password', 'manual login', 'login page', 'demo account',
+    'login via google', 'forgot password',
+    # German
+    'passwort', 'benutzername', 'anmelden', 'abmelden', 'neues passwort',
+    'aktuelles passwort', 'passwort ändern', 'passwort speichern',
+    # French
+    'mot de passe', 'nom d\'utilisateur', 'connexion', 'nouveau mot de passe',
+    # Spanish
+    'contraseña', 'nombre de usuario', 'iniciar sesión', 'nueva contraseña',
+    'contraseña actual',
+    # Italian
+    'password attuale', 'nuova password', 'nome utente', 'salva password',
+    # Portuguese
+    'senha', 'senha atual', 'nova senha', 'nome de usuário', 'salvar senha',
+    # Russian (transliterated for matching)
+    'пароль', 'имя пользователя', 'новый пароль', 'текущий пароль',
+    # Japanese common
+    'パスワード', 'ユーザ名', '新しいパスワード', '現在のパスワード',
+    # German single-word UI labels
+    'einloggen', 'anmelden', 'abmelden', 'registrieren',
+    # Italian single-word UI labels
+    'accedi', 'accesso', 'entra', 'esci',
+    # French single-word UI labels
+    'connexion', 'déconnexion', 'connecter',
+    # Spanish single-word UI labels
+    'ingresar', 'salir', 'entrar',
+    # Portuguese single-word UI labels
+    'entrar', 'sair', 'acessar',
+]
+
+# UI text patterns - if match contains these, it's likely UI text not a credential
+UI_TEXT_INDICATORS = [
+    # Sentence indicators (spaces + common words)
+    ' the ', ' a ', ' an ', ' is ', ' are ', ' was ', ' were ',
+    ' you ', ' your ', ' our ', ' their ', ' its ',
+    ' can ', ' cannot ', ' must ', ' should ', ' would ', ' could ',
+    ' have ', ' has ', ' had ', ' been ', ' being ',
+    ' this ', ' that ', ' these ', ' those ',
+    ' will ', ' won\'t ', ' don\'t ', ' doesn\'t ', ' didn\'t ',
+    ' not ', ' no ', ' yes ',
+    ' please ', ' enter ', ' click ', ' select ', ' choose ',
+    ' invalid ', ' incorrect ', ' error ', ' failed ', ' success ',
+    ' too short', ' too long', ' required', ' optional',
+    ' characters', ' between ', ' at least', ' minimum', ' maximum',
+    # Multi-language sentence patterns
+    ' le ', ' la ', ' les ', ' un ', ' une ', ' des ',  # French
+    ' der ', ' die ', ' das ', ' ein ', ' eine ',       # German
+    ' el ', ' los ', ' las ', ' un ', ' una ',          # Spanish
+    ' il ', ' lo ', ' gli ', ' un ', ' una ',           # Italian
+    ' o ', ' os ', ' as ', ' um ', ' uma ',             # Portuguese
+    # Common UI verbs/phrases
+    'forgot', 'reset', 'change', 'update', 'confirm', 'verify',
+    'log in', 'sign in', 'sign out',
+    # Error messages
+    'do not match', 'does not match', 'don\'t match',
+    'we cannot', 'you cannot', 'cannot be',
+    'incorrect',
+    # API key error messages
+    'have not added', 'not added', 'no ha añadido', 'non hai aggiunto',
+    'hast keinen', 'não adicionou', 'не добавили',
+]
+
+# Sequential/obviously fake patterns (regex)
+FAKE_PATTERN_REGEXES = [
+    r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',  # UUID format
+    r'^(.)\1{10,}$',                              # Repeated single character
+    r'^(..)\1{5,}$',                              # Repeated two characters
+    r'^x{10,}$',                                  # Just x's
+]
+
+# Sequences that indicate test/fake data
+FAKE_SEQUENCES = [
+    '1234567890',           # Sequential numbers
+    '0123456789',           # Sequential numbers
+    'abcdefghij',           # Sequential lowercase
+    'abcdefghijklmnop',     # Longer sequential lowercase
+    'abcdefghijklmnopqrstuvwxyz',  # Full alphabet
+    'ABCDEFGHIJ',           # Sequential uppercase
+    'ABCDEFGHIJKLMNOP',     # Longer sequential uppercase
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',  # Full uppercase alphabet
+]
+
 def is_false_positive(secret_type, match, context=""):
     """Check if a match is likely a false positive"""
     match_str = str(match) if not isinstance(match, str) else match
+    match_lower = match_str.lower()
 
-    # Check for false positive indicators
+    # Check for known public key patterns (not secrets)
+    for pattern in PUBLIC_KEY_PATTERNS:
+        if re.match(pattern, match_str):
+            return True
+
+    # Check for placeholder/test/example indicators
+    # Skip this check for Stripe patterns (pk_test_ is a legitimate Stripe test key format, not a placeholder)
+    if 'Stripe' not in secret_type:
+        for indicator in PLACEHOLDER_INDICATORS:
+            if indicator.lower() in match_lower:
+                return True
+
+    # Check for sequential/fake patterns (regex)
+    for pattern in FAKE_PATTERN_REGEXES:
+        if re.match(pattern, match_lower, re.IGNORECASE):
+            return True
+
+    # Check for fake sequences in the value
+    for seq in FAKE_SEQUENCES:
+        if seq.lower() in match_lower:
+            return True
+
+    # Check for false positive indicators in context
+    # Skip context check for JSON and Generic credential patterns - these are real hardcoded creds
+    # and often appear right next to webpack code like "function("
     for indicator in FALSE_POSITIVE_INDICATORS:
-        if indicator.lower() in match_str.lower():
+        if indicator.lower() in match_lower:
             return True
-        if indicator.lower() in context.lower():
-            return True
+        # Skip context filtering for JSON, Generic, and Stripe patterns
+        # (JSON/Generic are often in minified webpack bundles, Stripe keys are often in function calls like window.Stripe("pk_..."))
+        if 'JSON' not in secret_type and 'Generic' not in secret_type and 'Stripe' not in secret_type:
+            if indicator.lower() in context.lower():
+                return True
+
+    # Skip if value is all same case letters followed by all numbers (like abcdefgh12345678)
+    # Exception: Don't filter JSON credential patterns - these are real hardcoded passwords
+    if 'JSON' not in secret_type:
+        if re.match(r'^[a-z]{6,}[0-9]{6,}$', match_lower) or re.match(r'^[0-9]{6,}[a-z]{6,}$', match_lower):
+            # But allow if it has mixed case or special chars (real tokens usually do)
+            if match_str == match_lower or match_str == match_str.upper():
+                return True
+
+    # Skip very simple patterns
+    if re.match(r'^([a-f0-9]{8})+$', match_lower) and len(set(match_lower)) < 10:
+        return True
 
     # Specific checks per secret type
     if 'Telegram' in secret_type:
@@ -172,94 +278,78 @@ def is_false_positive(secret_type, match, context=""):
 
     if 'Generic' in secret_type:
         # Generic patterns are often false positives in minified JS
-        # Require at least some context suggesting it's a real secret
-        if len(match_str) < 20:
+        # But allow shorter matches for password/credential patterns
+        is_password_type = any(x in secret_type.lower() for x in ['password', 'passwd', 'pwd', 'pass', 'credential', 'login', 'username', 'demo'])
+        min_length = 3 if is_password_type else 20
+
+        if len(match_str) < min_length:
             return True
         # Skip if looks like minified variable names
         if re.match(r'^[a-z]{1,3}$', match_str):
             return True
 
+        # === ADDITIONAL GENERIC PATTERN FILTERS ===
+
+        # Skip exact matches of common non-credential values
+        if match_lower in EXACT_FALSE_POSITIVES:
+            return True
+
+        # Skip CSS selectors (start with . or #)
+        if match_str.startswith('.') or match_str.startswith('#'):
+            return True
+
+        # Skip URL paths (start with /)
+        if match_str.startswith('/'):
+            return True
+
+        # Skip if contains UI text indicators (likely a sentence/label)
+        for indicator in UI_TEXT_INDICATORS:
+            if indicator.lower() in match_lower:
+                return True
+
+        # Skip any string with spaces - real hardcoded credentials don't have spaces
+        # (e.g. "Cambia password", "Password vergessen?" are UI text, not credentials)
+        if ' ' in match_str:
+            return True
+
+        # Skip strings with hyphens that look like UI labels (e.g. "Login-Seite", "Demo-Account")
+        if '-' in match_str and any(w[0].isupper() for w in match_str.split('-') if w):
+            return True
+
+        # Skip strings that are mostly non-ASCII (likely UI text in other languages)
+        non_ascii_count = sum(1 for c in match_str if ord(c) > 127)
+        if non_ascii_count > len(match_str) * 0.3:  # More than 30% non-ASCII
+            return True
+
+        # Skip common localization key patterns
+        if match_str.startswith('feature.') or match_str.startswith('error.') or match_str.startswith('label.'):
+            return True
+
+        # Skip if ends with common file extensions
+        if re.search(r'\.(js|css|html|json|txt|md|yml|yaml|xml|png|jpg|svg)$', match_lower):
+            return True
+
+        # Skip URLs
+        if match_str.startswith('http://') or match_str.startswith('https://'):
+            return True
+
+    # Skip "BEARER_TOKEN" and similar placeholder patterns for Bearer Token type
+    if 'Bearer' in secret_type:
+        if match_str.upper() == match_str and '_' in match_str:  # ALL_CAPS_WITH_UNDERSCORES
+            return True
+
     return False
-
-def extract_generic_keywords(page_content):
-    """
-    Extract key-value pairs based on generic secret keywords.
-    Matches patterns like:
-    - "apikey": "value"
-    - apikey = "value"
-    - apikey: "value"
-    - 'api_key': 'value'
-    """
-    generic_secrets = {}
-
-    # Values that are clearly not secrets
-    SKIP_VALUES = [
-        'null', 'undefined', 'true', 'false', 'none', '',
-        '0', '1', 'test', 'example', 'placeholder', 'your-',
-        'xxx', 'yyy', 'zzz', 'abc', '123', 'TODO', 'FIXME',
-        'process.env', 'window.', 'document.', 'this.',
-    ]
-
-    for keyword in GENERIC_SECRET_KEYWORDS:
-        # Build regex patterns for different formats:
-        # 1. JSON style: "keyword": "value" or 'keyword': 'value'
-        # 2. JS assignment: keyword = "value" or keyword: "value"
-        # 3. Object property: keyword: "value"
-        patterns = [
-            # "keyword": "value" or 'keyword': 'value' (JSON/object style)
-            rf'["\']?{re.escape(keyword)}["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-            # keyword="value" (attribute style)
-            rf'{re.escape(keyword)}\s*=\s*["\']([^"\']+)["\']',
-        ]
-
-        for pattern in patterns:
-            try:
-                matches = re.findall(pattern, page_content, re.IGNORECASE)
-                for match in matches:
-                    value = match.strip() if isinstance(match, str) else str(match).strip()
-
-                    # Skip empty or too short values
-                    if len(value) < 8:
-                        continue
-
-                    # Skip common non-secret values
-                    skip = False
-                    for skip_val in SKIP_VALUES:
-                        if value.lower().startswith(skip_val.lower()):
-                            skip = True
-                            break
-                    if skip:
-                        continue
-
-                    # Skip if value looks like code/function
-                    if any(x in value for x in ['function', 'return', '=>', '()', '{}', '[]']):
-                        continue
-
-                    # Skip if value is a URL path (not a full URL with credentials)
-                    if value.startswith('/') and '://' not in value:
-                        continue
-
-                    # Create category name
-                    category = f"Generic ({keyword})"
-
-                    if category not in generic_secrets:
-                        generic_secrets[category] = []
-
-                    # Store as "keyword": "value" format
-                    key_value_pair = f'"{keyword}": "{value}"'
-                    if key_value_pair not in generic_secrets[category]:
-                        generic_secrets[category].append(key_value_pair)
-
-            except Exception:
-                pass
-
-    return generic_secrets
 
 
 def extract_secrets(page_content):
+    """Extract secrets using external patterns only.
+    Returns tuple: (secrets_found, generic_found)
+    - secrets_found: specific patterns -> secrets.json
+    - generic_found: Generic:* patterns -> passwords.json
+    """
     secrets_found = {}
+    generic_found = {}
 
-    # First: Pattern-based extraction (existing behavior)
     for secret_type, pattern in secret_patterns.items():
         try:
             matches = re.findall(pattern, page_content)
@@ -285,20 +375,19 @@ def extract_secrets(page_content):
 
                 if filtered_matches:
                     # Deduplicate matches
-                    secrets_found[secret_type] = list(set(filtered_matches))
+                    unique_matches = list(set(filtered_matches))
+
+                    # Route to appropriate output based on pattern type
+                    if secret_type.startswith('Generic:'):
+                        # Remove "Generic:" prefix for cleaner output
+                        clean_type = secret_type.replace('Generic:', '')
+                        generic_found[clean_type] = unique_matches
+                    else:
+                        secrets_found[secret_type] = unique_matches
         except Exception as e:
             print(Fore.YELLOW + f"[!] Skipping pattern {secret_type}: {e}")
 
-    # Second: Generic keyword-based extraction (NEW)
-    generic_secrets = extract_generic_keywords(page_content)
-    for category, values in generic_secrets.items():
-        if category not in secrets_found:
-            secrets_found[category] = values
-        else:
-            secrets_found[category].extend(values)
-            secrets_found[category] = list(set(secrets_found[category]))
-
-    return secrets_found
+    return secrets_found, generic_found
 
 def scan_url(url, current_index, total_urls):
     try:
@@ -308,27 +397,69 @@ def scan_url(url, current_index, total_urls):
         response = requests.get(url, timeout=15, verify=False)
         if response.status_code == 200:
             page_content = response.text
-            secrets = extract_secrets(page_content)
+            secrets, generic = extract_secrets(page_content)
+
+            result = {'url': url}
+            has_findings = False
+
             if secrets:
-                return {
-                    'url': url,
-                    'secrets': secrets
-                }
+                result['secrets'] = secrets
+                has_findings = True
+            if generic:
+                result['generic'] = generic
+                has_findings = True
+
+            if has_findings:
+                return result
     except requests.exceptions.RequestException as e:
         print(Fore.RED + f"\n[!] Error fetching {url}: {e}")
     return None
 
-def save_to_json_immediately(results, output_file='secrets.json'):
-    if os.path.exists(output_file):
-        with open(output_file, 'r') as f:
-            all_data = json.load(f)
-    else:
-        all_data = []
+def save_results(results):
+    """Save results to secrets.json and passwords.json separately."""
+    secrets_data = []
+    passwords_data = []
 
-    all_data.extend(results)
-    with open(output_file, 'w') as f:
-        json.dump(all_data, f, indent=4)
-    print(Fore.GREEN + f"\n[*] Results saved to secrets.json.")
+    for result in results:
+        url = result.get('url', '')
+
+        # Handle specific secrets -> secrets.json
+        if result.get('secrets'):
+            secrets_data.append({
+                'url': url,
+                'secrets': result['secrets']
+            })
+
+        # Handle generic patterns -> passwords.json
+        if result.get('generic'):
+            passwords_data.append({
+                'url': url,
+                'passwords': result['generic']
+            })
+
+    # Save to secrets.json
+    if secrets_data:
+        if os.path.exists('secrets.json'):
+            with open('secrets.json', 'r') as f:
+                existing = json.load(f)
+        else:
+            existing = []
+        existing.extend(secrets_data)
+        with open('secrets.json', 'w') as f:
+            json.dump(existing, f, indent=4)
+        print(Fore.GREEN + f"\n[*] Results saved to secrets.json.")
+
+    # Save to passwords.json
+    if passwords_data:
+        if os.path.exists('passwords.json'):
+            with open('passwords.json', 'r') as f:
+                existing = json.load(f)
+        else:
+            existing = []
+        existing.extend(passwords_data)
+        with open('passwords.json', 'w') as f:
+            json.dump(existing, f, indent=4)
+        print(Fore.CYAN + f"[*] Generic patterns saved to passwords.json.")
 
 def process_urls_concurrently_in_batches(url_list, max_workers=8, batch_size=1000):
     results = []
@@ -345,13 +476,13 @@ def process_urls_concurrently_in_batches(url_list, max_workers=8, batch_size=100
                 if result:
                     results.append(result)
                 if len(results) >= batch_size:
-                    save_to_json_immediately(results)
+                    save_results(results)
                     results = []
             except Exception as e:
                 print(Fore.RED + f"Error processing {url}: {e}")
 
     if results:
-        save_to_json_immediately(results)
+        save_results(results)
 
     print(Fore.GREEN + "[*] All results processed and saved.")
 
