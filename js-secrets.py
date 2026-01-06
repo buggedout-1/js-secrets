@@ -1,516 +1,678 @@
-#!/usr/bin/env python3
-
-import requests
-import re
-import argparse
-import json
-import os
-import sys
-import urllib3
-from colorama import Fore, Style, init
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# Disable SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Initialize Colorama
-init(autoreset=True)
-
-# Fix Windows console encoding
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-
-secret_patterns = {}
-
-def print_banner():
-    banner = f"""
-{Fore.CYAN}    ╔═══════════════════════════════════════════════════════════════════╗
-    ║                                                                   ║
-    ║  {Fore.YELLOW} ▐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██╗███████╗      ███████╗███████╗ ██████╗{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██║██╔════╝      ██╔════╝██╔════╝██╔════╝{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE}     ██║███████╗█████╗███████╗█████╗  ██║     {Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE}██   ██║╚════██║╚════╝╚════██║██╔══╝  ██║     {Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE}╚█████╔╝███████║      ███████║███████╗╚██████╗{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐  {Fore.WHITE} ╚════╝ ╚══════╝      ╚══════╝╚══════╝ ╚═════╝{Fore.YELLOW}         ▌ {Fore.CYAN}    ║
-    ║  {Fore.YELLOW} ▐▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▌ {Fore.CYAN}    ║
-    ║                                                                   ║
-    ║  {Fore.GREEN}  ░▒▓ JavaScript Secret Scanner ▓▒░{Fore.CYAN}                              ║
-    ║  {Fore.WHITE}  Extract API keys, tokens & credentials from JS files{Fore.CYAN}           ║
-    ║                                                                   ║
-    ║  {Fore.MAGENTA}  Author:{Fore.WHITE} buggedout{Fore.CYAN}                                              ║
-    ║  {Fore.MAGENTA}  Version:{Fore.WHITE} 2.0{Fore.CYAN}                                                   ║
-    ║  {Fore.MAGENTA}  GitHub:{Fore.WHITE} github.com/buggedout-1/js-secrets{Fore.CYAN}                      ║
-    ║                                                                   ║
-    ╚═══════════════════════════════════════════════════════════════════╝
-{Style.RESET_ALL}"""
-    print(banner)
-
-def load_patterns(pattern_file):
-    global secret_patterns
-    try:
-        with open(pattern_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and comments
-            if not line or line.startswith('#'):
-                continue
-            # Skip lines that don't look like pattern definitions
-            if not line.startswith("'") and not line.startswith('"'):
-                continue
-            line = line.rstrip(',')
-            # Find the pattern name (between quotes) and value (after the colon)
-            # Pattern format: 'Name': r'regex'
-            match = re.match(r'^[\'"](.+?)[\'"]\s*:\s*(.+)$', line)
-            if match:
-                key = match.group(1)
-                value_str = match.group(2).strip()
-                try:
-                    value = eval(value_str, {'re': re})
-                    secret_patterns[key] = value
-                except Exception as e:
-                    print(Fore.YELLOW + f"[!] Error parsing pattern '{key}': {e}")
-    except Exception as e:
-        print(Fore.RED + f"[!] Error loading pattern file: {e}")
-        sys.exit(1)
-
-    print(Fore.CYAN + f"[*] Loaded {len(secret_patterns)} patterns.")
-
-# False positive indicators - skip matches containing these
-FALSE_POSITIVE_INDICATORS = [
-    'cdn-cgi',                    # Cloudflare challenge scripts
-    'challenge-platform',         # Cloudflare challenge tokens
-    'cloudflare',                 # Cloudflare related
-    '__WEBPACK__',                # Webpack internal vars
-    'sourceMappingURL',           # Source maps
-    'function(',                  # JS function definitions
-    '.prototype',                 # JS prototype chains
-    'Object.defineProperty',      # JS internals
-    '===',                        # Comparison operators
-    'return ',                    # Function returns
-    'undefined',                  # JS undefined
-    'null',                       # JS null
-    '.exec)',                     # Regex exec
-    'RegExp',                     # RegExp constructor
-]
-
-# Known public keys / non-secret patterns to skip
-PUBLIC_KEY_PATTERNS = [
-    r'^6L[a-zA-Z0-9_-]{20,40}$',  # Google reCAPTCHA site keys (public) - various lengths
-    # Note: Stripe publishable keys (pk_test_, pk_live_) are NOT filtered
-    # because while they're technically "public", finding them in JS files
-    # can still indicate exposed API integration that should be audited
-]
-
-# Placeholder/test/example values to skip
-PLACEHOLDER_INDICATORS = [
-    'your-', 'your_', 'your ',     # Placeholder indicators
-    'replace', 'change-me', 'changeme',
-    'example', 'sample', 'dummy', 'fake',
-    'test_', 'test-', 'testing',
-    'placeholder', 'todo', 'fixme',
-    'xxx', 'yyy', 'zzz',
-    'enter-', 'enter_', 'insert-', 'insert_',
-    'my-api', 'my_api', 'myapi',
-    '<your', '[your', '{your',
-    'not_a_real', 'not-a-real', 'notareal',  # Placeholder passwords
-    'bearer_token', 'api_token', 'api_key_here',  # Common placeholders
-    'username:password',           # MongoDB/URL placeholder
-]
-
-# Values that are EXACT matches to skip (not substring)
-EXACT_FALSE_POSITIVES = [
-    # Fetch API credentials options
-    'include', 'omit', 'same-origin',
-    # HTML input types
-    'text', 'password',
-    # Common non-secret values
-    'true', 'false', 'null', 'undefined',
-    # Common JS values
-    'get', 'post', 'put', 'delete', 'patch',
-    # Common UI labels (English)
-    'username', 'password', 'login', 'logout', 'sign in', 'sign out',
-    'current password', 'new password', 'save password', 'change password',
-    'confirm password', 'manual login', 'login page', 'demo account',
-    'login via google', 'forgot password',
-    # German
-    'passwort', 'benutzername', 'anmelden', 'abmelden', 'neues passwort',
-    'aktuelles passwort', 'passwort ändern', 'passwort speichern',
-    # French
-    'mot de passe', 'nom d\'utilisateur', 'connexion', 'nouveau mot de passe',
-    # Spanish
-    'contraseña', 'nombre de usuario', 'iniciar sesión', 'nueva contraseña',
-    'contraseña actual',
-    # Italian
-    'password attuale', 'nuova password', 'nome utente', 'salva password',
-    # Portuguese
-    'senha', 'senha atual', 'nova senha', 'nome de usuário', 'salvar senha',
-    # Russian (transliterated for matching)
-    'пароль', 'имя пользователя', 'новый пароль', 'текущий пароль',
-    # Japanese common
-    'パスワード', 'ユーザ名', '新しいパスワード', '現在のパスワード',
-    # German single-word UI labels
-    'einloggen', 'anmelden', 'abmelden', 'registrieren',
-    # Italian single-word UI labels
-    'accedi', 'accesso', 'entra', 'esci',
-    # French single-word UI labels
-    'connexion', 'déconnexion', 'connecter',
-    # Spanish single-word UI labels
-    'ingresar', 'salir', 'entrar',
-    # Portuguese single-word UI labels
-    'entrar', 'sair', 'acessar',
-]
-
-# UI text patterns - if match contains these, it's likely UI text not a credential
-UI_TEXT_INDICATORS = [
-    # Sentence indicators (spaces + common words)
-    ' the ', ' a ', ' an ', ' is ', ' are ', ' was ', ' were ',
-    ' you ', ' your ', ' our ', ' their ', ' its ',
-    ' can ', ' cannot ', ' must ', ' should ', ' would ', ' could ',
-    ' have ', ' has ', ' had ', ' been ', ' being ',
-    ' this ', ' that ', ' these ', ' those ',
-    ' will ', ' won\'t ', ' don\'t ', ' doesn\'t ', ' didn\'t ',
-    ' not ', ' no ', ' yes ',
-    ' please ', ' enter ', ' click ', ' select ', ' choose ',
-    ' invalid ', ' incorrect ', ' error ', ' failed ', ' success ',
-    ' too short', ' too long', ' required', ' optional',
-    ' characters', ' between ', ' at least', ' minimum', ' maximum',
-    # Multi-language sentence patterns
-    ' le ', ' la ', ' les ', ' un ', ' une ', ' des ',  # French
-    ' der ', ' die ', ' das ', ' ein ', ' eine ',       # German
-    ' el ', ' los ', ' las ', ' un ', ' una ',          # Spanish
-    ' il ', ' lo ', ' gli ', ' un ', ' una ',           # Italian
-    ' o ', ' os ', ' as ', ' um ', ' uma ',             # Portuguese
-    # Common UI verbs/phrases
-    'forgot', 'reset', 'change', 'update', 'confirm', 'verify',
-    'log in', 'sign in', 'sign out',
-    # Error messages
-    'do not match', 'does not match', 'don\'t match',
-    'we cannot', 'you cannot', 'cannot be',
-    'incorrect',
-    # API key error messages
-    'have not added', 'not added', 'no ha añadido', 'non hai aggiunto',
-    'hast keinen', 'não adicionou', 'не добавили',
-]
-
-# Sequential/obviously fake patterns (regex)
-FAKE_PATTERN_REGEXES = [
-    r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',  # UUID format
-    r'^(.)\1{10,}$',                              # Repeated single character
-    r'^(..)\1{5,}$',                              # Repeated two characters
-    r'^x{10,}$',                                  # Just x's
-]
-
-# Sequences that indicate test/fake data
-FAKE_SEQUENCES = [
-    '1234567890',           # Sequential numbers
-    '0123456789',           # Sequential numbers
-    'abcdefghij',           # Sequential lowercase
-    'abcdefghijklmnop',     # Longer sequential lowercase
-    'abcdefghijklmnopqrstuvwxyz',  # Full alphabet
-    'ABCDEFGHIJ',           # Sequential uppercase
-    'ABCDEFGHIJKLMNOP',     # Longer sequential uppercase
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',  # Full uppercase alphabet
-]
-
-def is_false_positive(secret_type, match, context=""):
-    """Check if a match is likely a false positive"""
-    match_str = str(match) if not isinstance(match, str) else match
-    match_lower = match_str.lower()
-
-    # Check for known public key patterns (not secrets)
-    for pattern in PUBLIC_KEY_PATTERNS:
-        if re.match(pattern, match_str):
-            return True
-
-    # Check for placeholder/test/example indicators
-    # Skip this check for Stripe patterns (pk_test_ is a legitimate Stripe test key format, not a placeholder)
-    if 'Stripe' not in secret_type:
-        for indicator in PLACEHOLDER_INDICATORS:
-            if indicator.lower() in match_lower:
-                return True
-
-    # Check for sequential/fake patterns (regex)
-    for pattern in FAKE_PATTERN_REGEXES:
-        if re.match(pattern, match_lower, re.IGNORECASE):
-            return True
-
-    # Check for fake sequences in the value
-    for seq in FAKE_SEQUENCES:
-        if seq.lower() in match_lower:
-            return True
-
-    # Check for false positive indicators in context
-    # Skip context check for JSON and Generic credential patterns - these are real hardcoded creds
-    # and often appear right next to webpack code like "function("
-    for indicator in FALSE_POSITIVE_INDICATORS:
-        if indicator.lower() in match_lower:
-            return True
-        # Skip context filtering for JSON, Generic, and Stripe patterns
-        # (JSON/Generic are often in minified webpack bundles, Stripe keys are often in function calls like window.Stripe("pk_..."))
-        if 'JSON' not in secret_type and 'Generic' not in secret_type and 'Stripe' not in secret_type:
-            if indicator.lower() in context.lower():
-                return True
-
-    # Skip if value is all same case letters followed by all numbers (like abcdefgh12345678)
-    # Exception: Don't filter JSON credential patterns - these are real hardcoded passwords
-    if 'JSON' not in secret_type:
-        if re.match(r'^[a-z]{6,}[0-9]{6,}$', match_lower) or re.match(r'^[0-9]{6,}[a-z]{6,}$', match_lower):
-            # But allow if it has mixed case or special chars (real tokens usually do)
-            if match_str == match_lower or match_str == match_str.upper():
-                return True
-
-    # Skip very simple patterns
-    if re.match(r'^([a-f0-9]{8})+$', match_lower) and len(set(match_lower)) < 10:
-        return True
-
-    # Specific checks per secret type
-    if 'Telegram' in secret_type:
-        # Real Telegram tokens always start with digits and have 'AA' after colon
-        if not re.match(r'^\d{9,10}:AA', match_str):
-            return True
-
-    if 'Azure SAS' in secret_type:
-        # Must have proper SAS format with date
-        if 'sv=' not in match_str or not re.search(r'\d{4}-\d{2}-\d{2}', match_str):
-            return True
-
-    if 'Generic' in secret_type:
-        # Generic patterns are often false positives in minified JS
-        # But allow shorter matches for password/credential patterns
-        is_password_type = any(x in secret_type.lower() for x in ['password', 'passwd', 'pwd', 'pass', 'credential', 'login', 'username', 'demo'])
-        min_length = 3 if is_password_type else 20
-
-        if len(match_str) < min_length:
-            return True
-        # Skip if looks like minified variable names
-        if re.match(r'^[a-z]{1,3}$', match_str):
-            return True
-
-        # === ADDITIONAL GENERIC PATTERN FILTERS ===
-
-        # Skip exact matches of common non-credential values
-        if match_lower in EXACT_FALSE_POSITIVES:
-            return True
-
-        # Skip CSS selectors (start with . or #)
-        if match_str.startswith('.') or match_str.startswith('#'):
-            return True
-
-        # Skip URL paths (start with /)
-        if match_str.startswith('/'):
-            return True
-
-        # Skip if contains UI text indicators (likely a sentence/label)
-        for indicator in UI_TEXT_INDICATORS:
-            if indicator.lower() in match_lower:
-                return True
-
-        # Skip any string with spaces - real hardcoded credentials don't have spaces
-        # (e.g. "Cambia password", "Password vergessen?" are UI text, not credentials)
-        if ' ' in match_str:
-            return True
-
-        # Skip strings with hyphens that look like UI labels (e.g. "Login-Seite", "Demo-Account")
-        if '-' in match_str and any(w[0].isupper() for w in match_str.split('-') if w):
-            return True
-
-        # Skip strings that are mostly non-ASCII (likely UI text in other languages)
-        non_ascii_count = sum(1 for c in match_str if ord(c) > 127)
-        if non_ascii_count > len(match_str) * 0.3:  # More than 30% non-ASCII
-            return True
-
-        # Skip common localization key patterns
-        if match_str.startswith('feature.') or match_str.startswith('error.') or match_str.startswith('label.'):
-            return True
-
-        # Skip if ends with common file extensions
-        if re.search(r'\.(js|css|html|json|txt|md|yml|yaml|xml|png|jpg|svg)$', match_lower):
-            return True
-
-        # Skip URLs
-        if match_str.startswith('http://') or match_str.startswith('https://'):
-            return True
-
-    # Skip "BEARER_TOKEN" and similar placeholder patterns for Bearer Token type
-    if 'Bearer' in secret_type:
-        if match_str.upper() == match_str and '_' in match_str:  # ALL_CAPS_WITH_UNDERSCORES
-            return True
-
-    return False
-
-
-def extract_secrets(page_content):
-    """Extract secrets using external patterns only.
-    Returns tuple: (secrets_found, generic_found)
-    - secrets_found: specific patterns -> secrets.json
-    - generic_found: Generic:* patterns -> passwords.json
-    """
-    secrets_found = {}
-    generic_found = {}
-
-    for secret_type, pattern in secret_patterns.items():
-        try:
-            matches = re.findall(pattern, page_content)
-            if matches:
-                # Filter out false positives
-                filtered_matches = []
-                for match in matches:
-                    # Get some context around the match for better FP detection
-                    match_str = str(match) if not isinstance(match, str) else match
-                    try:
-                        match_pos = page_content.find(match_str)
-                        if match_pos != -1:
-                            context_start = max(0, match_pos - 50)
-                            context_end = min(len(page_content), match_pos + len(match_str) + 50)
-                            context = page_content[context_start:context_end]
-                        else:
-                            context = ""
-                    except:
-                        context = ""
-
-                    if not is_false_positive(secret_type, match, context):
-                        filtered_matches.append(match)
-
-                if filtered_matches:
-                    # Deduplicate matches
-                    unique_matches = list(set(filtered_matches))
-
-                    # Route to appropriate output based on pattern type
-                    if secret_type.startswith('Generic:'):
-                        # Remove "Generic:" prefix for cleaner output
-                        clean_type = secret_type.replace('Generic:', '')
-                        generic_found[clean_type] = unique_matches
-                    else:
-                        secrets_found[secret_type] = unique_matches
-        except Exception as e:
-            print(Fore.YELLOW + f"[!] Skipping pattern {secret_type}: {e}")
-
-    return secrets_found, generic_found
-
-def scan_url(url, current_index, total_urls):
-    try:
-        sys.stdout.write(f"\rLoading URL {current_index} of {total_urls}...")
-        sys.stdout.flush()
-
-        response = requests.get(url, timeout=15, verify=False)
-        if response.status_code == 200:
-            page_content = response.text
-            secrets, generic = extract_secrets(page_content)
-
-            result = {'url': url}
-            has_findings = False
-
-            if secrets:
-                result['secrets'] = secrets
-                has_findings = True
-            if generic:
-                result['generic'] = generic
-                has_findings = True
-
-            if has_findings:
-                return result
-    except requests.exceptions.RequestException as e:
-        print(Fore.RED + f"\n[!] Error fetching {url}: {e}")
-    return None
-
-def save_results(results):
-    """Save results to secrets.json and passwords.json separately."""
-    secrets_data = []
-    passwords_data = []
-
-    for result in results:
-        url = result.get('url', '')
-
-        # Handle specific secrets -> secrets.json
-        if result.get('secrets'):
-            secrets_data.append({
-                'url': url,
-                'secrets': result['secrets']
-            })
-
-        # Handle generic patterns -> passwords.json
-        if result.get('generic'):
-            passwords_data.append({
-                'url': url,
-                'passwords': result['generic']
-            })
-
-    # Save to secrets.json
-    if secrets_data:
-        if os.path.exists('secrets.json'):
-            with open('secrets.json', 'r') as f:
-                existing = json.load(f)
-        else:
-            existing = []
-        existing.extend(secrets_data)
-        with open('secrets.json', 'w') as f:
-            json.dump(existing, f, indent=4)
-        print(Fore.GREEN + f"\n[*] Results saved to secrets.json.")
-
-    # Save to passwords.json
-    if passwords_data:
-        if os.path.exists('passwords.json'):
-            with open('passwords.json', 'r') as f:
-                existing = json.load(f)
-        else:
-            existing = []
-        existing.extend(passwords_data)
-        with open('passwords.json', 'w') as f:
-            json.dump(existing, f, indent=4)
-        print(Fore.CYAN + f"[*] Generic patterns saved to passwords.json.")
-
-def process_urls_concurrently_in_batches(url_list, max_workers=8, batch_size=1000):
-    results = []
-    total_urls = len(url_list)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {executor.submit(scan_url, url, index, total_urls): (url, index)
-                         for index, url in enumerate(url_list, start=1)}
-
-        for future in as_completed(future_to_url):
-            url, index = future_to_url[future]
-            try:
-                result = future.result()
-                if result:
-                    results.append(result)
-                if len(results) >= batch_size:
-                    save_results(results)
-                    results = []
-            except Exception as e:
-                print(Fore.RED + f"Error processing {url}: {e}")
-
-    if results:
-        save_results(results)
-
-    print(Fore.GREEN + "[*] All results processed and saved.")
-
-def process_urls_chunked(url_list, max_workers=8, chunk_size=10000):
-    for i in range(0, len(url_list), chunk_size):
-        chunk = url_list[i:i+chunk_size]
-        process_urls_concurrently_in_batches(chunk, max_workers)
-
-def main():
-    print_banner()
-    parser = argparse.ArgumentParser(description="Extract secrets from a list of URLs.")
-    parser.add_argument('-l', '--list', type=str, help="Path to a file containing a list of URLs", required=False)
-    parser.add_argument('-w', '--workers', type=int, help="Number of workers (threads) to use", default=8)
-    parser.add_argument('-p', '--patterns', type=str, help="Path to a pattern file", required=True)
-
-    args = parser.parse_args()
-
-    if args.patterns:
-        load_patterns(args.patterns)
-
-    if args.list:
-        with open(args.list, 'r') as file:
-            urls = file.readlines()
-        urls = [url.strip() for url in urls]
-        process_urls_chunked(urls, max_workers=args.workers)
-    else:
-        print(Fore.RED + "Please provide a URL list file using the -l option.")
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main()
+# ============================================
+# AWS
+# ============================================
+'AWS Access Key ID': r'(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}',
+# FIXED: All keywords were optional, matched any 40-char alphanumeric (function names, minified vars)
+# Now requires 'aws' OR 'secret_access_key' context
+'AWS Secret Access Key': r'(?i)(?:aws[_-]?(?:secret[_-]?)?(?:access[_-]?)?key|secret[_-]?access[_-]?key)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{40})',
+'AWS Session Token': r'(?i)(?:aws)?_?session_?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{100,})',
+'AWS ARN': r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9-_/]+',
+
+# ============================================
+# Google/GCP (excluding public Maps API keys)
+# ============================================
+# Removed: 'Google API Key': r'AIza[0-9A-Za-z\-_]{35}' - Often public/intended to be exposed
+'Google OAuth Client ID': r'[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com',
+'Google OAuth Client Secret': r'(?i)google[_-]?(?:client[_-]?)?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{24})',
+'Google Cloud Service Account': r'(?i)\"type\"\s*:\s*\"service_account\"',
+'Firebase URL': r'https://[a-z0-9-]+\.firebaseio\.com',
+# Removed: Firebase API Key - uses same AIza prefix as Google, often public
+
+# Google Docs/Drive URLs (can expose sensitive documents)
+'Google Docs Spreadsheet': r'docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Document': r'docs\.google\.com/document/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs File': r'docs\.google\.com/file/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Folder': r'docs\.google\.com/folder/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Form': r'docs\.google\.com/forms/d/([a-zA-Z0-9_-]{25,})',
+'Google Docs Presentation': r'docs\.google\.com/presentation/d/([a-zA-Z0-9_-]{25,})',
+'Google Drive Folder': r'drive\.google\.com/drive/folders/([a-zA-Z0-9_-]{25,})',
+'Google Drive File': r'drive\.google\.com/file/d/([a-zA-Z0-9_-]{25,})',
+
+# ============================================
+# GitHub
+# ============================================
+'GitHub Personal Access Token (Classic)': r'ghp_[A-Za-z0-9]{36}',
+'GitHub OAuth Access Token': r'gho_[A-Za-z0-9]{36}',
+'GitHub User-to-Server Token': r'ghu_[A-Za-z0-9]{36}',
+'GitHub Server-to-Server Token': r'ghs_[A-Za-z0-9]{36}',
+'GitHub Refresh Token': r'ghr_[A-Za-z0-9]{36}',
+'GitHub Fine-Grained PAT': r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}',
+# FIXED: Original pattern matched ANY 40-char hex (SHA1, git commits, content hashes)
+# Now requires github/gh context keyword to reduce false positives
+'GitHub App Token': r'(?i)(?:github|gh)[_-]?(?:app)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{40})',
+
+# ============================================
+# GitLab
+# ============================================
+'GitLab Personal Access Token': r'glpat-[A-Za-z0-9\-]{20,}',
+'GitLab Pipeline Token': r'glptt-[A-Za-z0-9]{40}',
+'GitLab Runner Token': r'GR1348941[A-Za-z0-9\-\_]{20,}',
+
+# ============================================
+# Slack
+# ============================================
+'Slack Bot Token': r'xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*',
+'Slack User Token': r'xoxp-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*',
+'Slack App Token': r'xapp-[0-9]{1}-[A-Z0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{60,}',
+'Slack Config Token': r'xoxe\.xox[bp]-[0-9]{1}-[A-Z0-9]{160,}',
+'Slack Refresh Token': r'xoxe-[0-9]{1}-[A-Z0-9]{140,}',
+'Slack Webhook URL': r'https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[a-zA-Z0-9]{24}',
+
+# ============================================
+# Stripe
+# ============================================
+'Stripe Live Secret Key': r'sk_live_[0-9a-zA-Z]{24,}',
+'Stripe Test Secret Key': r'sk_test_[0-9a-zA-Z]{24,}',
+'Stripe Live Publishable Key': r'pk_live_[0-9a-zA-Z]{24,}',
+'Stripe Test Publishable Key': r'pk_test_[0-9a-zA-Z]{24,}',
+'Stripe Restricted Key': r'rk_live_[0-9a-zA-Z]{24,}',
+'Stripe Webhook Secret': r'whsec_[0-9a-zA-Z]{32,}',
+
+# ============================================
+# OpenAI / AI Services
+# ============================================
+'OpenAI API Key': r'sk-[A-Za-z0-9]{48}',
+'OpenAI Project Key': r'sk-proj-[A-Za-z0-9\-_]{80,}',
+'Anthropic API Key': r'sk-ant-api[0-9]{2}-[A-Za-z0-9\-_]{80,}',
+
+# ============================================
+# Discord
+# ============================================
+'Discord Bot Token': r'[MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27}',
+'Discord Webhook URL': r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{17,}/[A-Za-z0-9_-]{60,}',
+
+# ============================================
+# Twilio
+# ============================================
+'Twilio Account SID': r'AC[a-f0-9]{32}',
+'Twilio Auth Token': r'(?i)twilio[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+'Twilio API Key SID': r'SK[a-f0-9]{32}',
+
+# ============================================
+# SendGrid
+# ============================================
+'SendGrid API Key': r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}',
+
+# ============================================
+# Mailgun
+# ============================================
+'Mailgun API Key': r'key-[0-9a-zA-Z]{32}',
+# FIXED: All keywords were optional, matched any 36-char hex string
+# Now requires 'mailgun' keyword
+'Mailgun Webhook Signing Key': r'(?i)mailgun[_-]?(?:webhook[_-]?)?(?:signing[_-]?)?key[\'"\s]*[:=][\'"\s]*([a-f0-9-]{36})',
+
+# ============================================
+# Mailchimp
+# ============================================
+'Mailchimp API Key': r'[a-f0-9]{32}-us[0-9]{1,2}',
+
+# ============================================
+# NPM
+# ============================================
+'NPM Access Token': r'npm_[A-Za-z0-9]{36}',
+
+# ============================================
+# PyPI
+# ============================================
+'PyPI API Token': r'pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}',
+
+# ============================================
+# Heroku
+# ============================================
+'Heroku API Key': r'(?i)heroku[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+
+# ============================================
+# DigitalOcean
+# ============================================
+'DigitalOcean Personal Access Token': r'dop_v1_[a-f0-9]{64}',
+'DigitalOcean OAuth Token': r'doo_v1_[a-f0-9]{64}',
+'DigitalOcean Refresh Token': r'dor_v1_[a-f0-9]{64}',
+
+# ============================================
+# Azure
+# ============================================
+'Azure Storage Account Key': r'(?i)(?:account)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9+/]{86}==)',
+# FIXED: Made more specific to avoid matching minified JS variables
+# Requires both sv= AND sig= in same context, or full SAS URL pattern
+'Azure SAS Token': r'(?:sv=\d{4}-\d{2}-\d{2}&[^"\']+sig=[A-Za-z0-9%+/=]{30,}|sig=[A-Za-z0-9%+/=]{40,}&sv=\d{4})',
+'Azure Connection String': r'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{88};',
+
+# ============================================
+# Shopify
+# ============================================
+'Shopify Access Token': r'shpat_[a-fA-F0-9]{32}',
+'Shopify Custom App Token': r'shpca_[a-fA-F0-9]{32}',
+'Shopify Private App Token': r'shppa_[a-fA-F0-9]{32}',
+'Shopify Shared Secret': r'shpss_[a-fA-F0-9]{32}',
+
+# ============================================
+# Square
+# ============================================
+'Square Access Token': r'sq0atp-[0-9A-Za-z\-_]{22}',
+'Square OAuth Secret': r'sq0csp-[0-9A-Za-z\-_]{43}',
+
+# ============================================
+# PayPal
+# ============================================
+'PayPal Braintree Access Token': r'access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}',
+'PayPal Client ID': r'paypal[Cc]lient[Ii]d\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
+'PayPal Client Secret': r'paypal[Cc]lient[Ss]ecret\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
+
+# ============================================
+# Telegram
+# ============================================
+
+'Telegram Bot Token': r'(?:bot)?[0-9]{9,10}:AA[A-Za-z0-9_-]{33}',
+
+
+
+# ============================================
+# Twitter/X
+# ============================================
+
+'Twitter API Key': r'(?i)(?:twitter|tw)[_-]?(?:api)?[_-]?(?:key|consumer)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{25})',
+'Twitter API Secret': r'(?i)(?:twitter|tw)[_-]?(?:api)?[_-]?(?:secret)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{50})',
+
+# ============================================
+# LinkedIn
+# ============================================
+'LinkedIn Client ID': r'(?i)linkedin[_-]?(?:client)?[_-]?id[\'"\s]*[:=][\'"\s]*([a-z0-9]{14})',
+'LinkedIn Client Secret': r'(?i)linkedin[_-]?(?:client)?[_-]?secret[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{16})',
+
+# ============================================
+# Datadog
+# ============================================
+'Datadog API Key': r'(?i)(?:datadog|dd)[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+'Datadog Application Key': r'(?i)(?:datadog|dd)[_-]?(?:app(?:lication)?)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{40})',
+
+# ============================================
+# New Relic
+# ============================================
+'New Relic API Key': r'NRAK-[A-Z0-9]{27}',
+'New Relic License Key': r'[a-f0-9]{40}NRAL',
+# FIXED: 'NRI' prefix (3 chars) too common in minified JS
+# Now requires context keyword (new_relic/nr) with the NRI value
+'New Relic Insights Key': r'(?i)(?:new[_-]?relic|nr)[_-]?(?:insights?)?[_-]?key[\'"\s]*[:=][\'"\s]*(NRI[A-Za-z0-9\-]{32})',
+
+# ============================================
+# Sentry
+# ============================================
+'Sentry DSN': r'https://[a-f0-9]{32}@(?:[a-z0-9]+\.)?sentry\.io/[0-9]+',
+'Sentry Auth Token': r'(?i)sentry[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{64})',
+
+# ============================================
+# PagerDuty
+# ============================================
+'PagerDuty API Key': r'(?i)pagerduty[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9+_-]{20})',
+
+# ============================================
+# Algolia
+# ============================================
+'Algolia API Key': r'(?i)algolia[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+'Algolia Admin Key': r'(?i)algolia[_-]?(?:admin)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+
+# ============================================
+# Cloudflare
+# ============================================
+'Cloudflare API Key': r'(?i)cloudflare[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{37})',
+'Cloudflare API Token': r'(?i)cloudflare[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{40})',
+
+# ============================================
+# Mapbox
+# ============================================
+'Mapbox Access Token': r'pk\.[a-zA-Z0-9]{60,}\.[a-zA-Z0-9]{20,}',
+'Mapbox Secret Token': r'sk\.[a-zA-Z0-9]{60,}\.[a-zA-Z0-9]{20,}',
+
+# ============================================
+# MongoDB
+# ============================================
+'MongoDB Connection String': r'mongodb(?:\+srv)?://[^\s\'"<>]+',
+
+# ============================================
+# PostgreSQL
+# ============================================
+'PostgreSQL Connection String': r'postgres(?:ql)?://[^\s\'"<>]+',
+
+# ============================================
+# MySQL
+# ============================================
+'MySQL Connection String': r'mysql://[^\s\'"<>]+',
+
+# ============================================
+# Redis
+# ============================================
+'Redis Connection String': r'redis(?:s)?://[^\s\'"<>]+',
+
+# ============================================
+# JWT
+# ============================================
+'JSON Web Token': r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*',
+
+# ============================================
+# Authorization Headers (Basic & Bearer)
+# ============================================
+'Authorization Bearer Token': r'(?i)(?:authorization|bearer)[\'"\s]*[:=][\'"\s]*bearer\s+([A-Za-z0-9_\-\.]+)',
+'Authorization Basic Token': r'(?i)(?:authorization)[\'"\s]*[:=][\'"\s]*basic\s+([A-Za-z0-9+/=]{20,})',
+'Basic Auth Header': r'(?i)Basic\s+([A-Za-z0-9+/=]{20,})',
+'Bearer Auth Header': r'(?i)Bearer\s+([A-Za-z0-9_\-\.]{20,})',
+
+# ============================================
+# Private Keys
+# ============================================
+'RSA Private Key': r'-----BEGIN RSA PRIVATE KEY-----',
+'OpenSSH Private Key': r'-----BEGIN OPENSSH PRIVATE KEY-----',
+'DSA Private Key': r'-----BEGIN DSA PRIVATE KEY-----',
+'EC Private Key': r'-----BEGIN EC PRIVATE KEY-----',
+'PGP Private Key': r'-----BEGIN PGP PRIVATE KEY BLOCK-----',
+'Generic Private Key': r'-----BEGIN PRIVATE KEY-----',
+'Encrypted Private Key': r'-----BEGIN ENCRYPTED PRIVATE KEY-----',
+
+# ============================================
+# HashiCorp Vault
+# ============================================
+'Vault Token': r'(?:hvs|hvb|hvr)\.[A-Za-z0-9_-]{24,}',
+
+# ============================================
+# Doppler
+# ============================================
+'Doppler API Token': r'dp\.pt\.[a-zA-Z0-9]{43}',
+
+# ============================================
+# Supabase
+# ============================================
+'Supabase API Key': r'(?i)supabase[_-]?(?:key|anon|service)[\'"\s]*[:=][\'"\s]*(eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*)',
+
+# ============================================
+# Vercel
+# ============================================
+'Vercel Access Token': r'(?i)vercel[_-]?(?:token|access)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{24})',
+
+# ============================================
+# Netlify
+# ============================================
+'Netlify Access Token': r'(?i)netlify[_-]?(?:token|access)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{40,})',
+
+# ============================================
+# CircleCI
+# ============================================
+'CircleCI Personal Token': r'(?i)circle[_-]?(?:ci)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{40})',
+
+# ============================================
+# Travis CI
+# ============================================
+'Travis CI Token': r'(?i)travis[_-]?(?:ci)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{22})',
+
+# ============================================
+# Jenkins
+# ============================================
+'Jenkins API Token': r'(?i)jenkins[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32,})',
+
+# ============================================
+# SonarQube
+# ============================================
+'SonarQube Token': r'sqp_[a-f0-9]{40}',
+
+# ============================================
+# Grafana
+# ============================================
+'Grafana API Key': r'eyJrIjoi[A-Za-z0-9_-]{50,}',
+'Grafana Service Account Token': r'glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}',
+
+# ============================================
+# Pulumi
+# ============================================
+'Pulumi Access Token': r'pul-[a-f0-9]{40}',
+
+# ============================================
+# Contentful
+# ============================================
+'Contentful Delivery Token': r'(?i)contentful[_-]?(?:delivery)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{43})',
+
+# ============================================
+# HubSpot
+# ============================================
+'HubSpot API Key': r'(?i)hubspot[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
+'HubSpot Private App Token': r'pat-(?:na|eu)1-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+
+# ============================================
+# Intercom
+# ============================================
+'Intercom Access Token': r'(?i)intercom[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9=]{60,})',
+
+# ============================================
+# Zendesk
+# ============================================
+'Zendesk API Token': r'(?i)zendesk[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{40})',
+
+# ============================================
+# Asana
+# ============================================
+'Asana Personal Access Token': r'[0-9]/[0-9]{16}:[A-Za-z0-9]{32}',
+
+# ============================================
+# Jira
+# ============================================
+'Jira API Token': r'(?i)jira[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{24})',
+
+# ============================================
+# Atlassian
+# ============================================
+'Atlassian API Token': r'(?i)atlassian[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{24})',
+
+# ============================================
+# Okta
+# ============================================
+'Okta API Token': r'(?i)okta[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*00[A-Za-z0-9_-]{40}',
+
+# ============================================
+# Auth0
+# ============================================
+'Auth0 Management API Token': r'(?i)auth0[_-]?(?:mgmt|management)?[_-]?token[\'"\s]*[:=][\'"\s]*(eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*)',
+
+# ============================================
+# Plaid
+# ============================================
+'Plaid Client ID': r'(?i)plaid[_-]?(?:client)?[_-]?id[\'"\s]*[:=][\'"\s]*([a-f0-9]{24})',
+'Plaid Secret': r'(?i)plaid[_-]?(?:secret)[\'"\s]*[:=][\'"\s]*([a-f0-9]{30})',
+
+# ============================================
+# Braintree
+# ============================================
+'Braintree Access Token': r'access_token\$(?:production|sandbox)\$[a-z0-9]{16}\$[a-f0-9]{32}',
+
+# ============================================
+# Coinbase
+# ============================================
+'Coinbase API Key': r'(?i)coinbase[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{16})',
+
+# ============================================
+# Binance
+# ============================================
+'Binance API Key': r'(?i)binance[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{64})',
+
+# ============================================
+# Infura
+# ============================================
+'Infura API Key': r'(?i)infura[_-]?(?:api)?[_-]?(?:key|id)[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+
+# ============================================
+# Alchemy
+# ============================================
+'Alchemy API Key': r'(?i)alchemy[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{32})',
+
+# ============================================
+# Airtable
+# ============================================
+'Airtable API Key': r'["\']?(key[A-Za-z0-9]{14})["\']',
+'Airtable Personal Access Token': r'pat[A-Za-z0-9]{14}\.[a-f0-9]{64}',
+
+# ============================================
+# Notion
+# ============================================
+'Notion Integration Token': r'secret_[A-Za-z0-9]{43}',
+
+# ============================================
+# Linear
+# ============================================
+'Linear API Key': r'lin_api_[A-Za-z0-9]{40}',
+
+# ============================================
+# Figma
+# ============================================
+'Figma Personal Access Token': r'figd_[A-Za-z0-9_-]{40,}',
+
+# ============================================
+# Lark/Feishu
+# ============================================
+'Lark/Feishu App Secret': r'(?i)(?:lark|feishu)[_-]?(?:app)?[_-]?secret[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{32})',
+
+# ============================================
+# Dynatrace
+# ============================================
+'Dynatrace API Token': r'dt0c01\.[A-Z0-9]{24}\.[A-Z0-9]{64}',
+
+# ============================================
+# Splunk
+# ============================================
+'Splunk HEC Token': r'(?i)splunk[_-]?(?:hec)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
+
+# ============================================
+# Elasticsearch
+# ============================================
+'Elasticsearch API Key': r'(?i)elastic(?:search)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{20,})',
+
+# ============================================
+# LaunchDarkly
+# ============================================
+'LaunchDarkly SDK Key': r'sdk-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+'LaunchDarkly API Key': r'api-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}',
+
+# ============================================
+# PostHog
+# ============================================
+'PostHog API Key': r'phc_[A-Za-z0-9]{32,}',
+
+# ============================================
+# Mixpanel
+# ============================================
+'Mixpanel Project Token': r'(?i)mixpanel[_-]?(?:project)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+# ============================================
+
+
+# ============================================
+# Segment
+# ============================================
+'Segment Write Key': r'(?i)segment[_-]?(?:write)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{32})',
+
+# ============================================
+# Twitch
+# ============================================
+'Twitch Client ID': r'(?i)twitch[_-]?(?:client)?[_-]?id[\'"\s]*[:=][\'"\s]*([a-z0-9]{30})',
+'Twitch OAuth Token': r'oauth:[a-z0-9]{30}',
+
+# ============================================
+# YouTube
+# ============================================
+'YouTube API Key': r'(?i)youtube[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*(AIza[0-9A-Za-z\-_]{35})',
+
+# ============================================
+# Spotify
+# ============================================
+'Spotify Client ID': r'(?i)spotify[_-]?(?:client)?[_-]?id[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+'Spotify Client Secret': r'(?i)spotify[_-]?(?:client)?[_-]?secret[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+
+# ============================================
+# Zoom
+# ============================================
+'Zoom JWT Token': r'(?i)zoom[_-]?(?:jwt)?[_-]?token[\'"\s]*[:=][\'"\s]*(eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*)',
+
+# ============================================
+# DocuSign
+# ============================================
+'DocuSign Integration Key': r'(?i)docusign[_-]?(?:integration)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})',
+
+# ============================================
+# Dropbox
+# ============================================
+'Dropbox Access Token': r'sl\.[A-Za-z0-9_-]{130,}',
+'Dropbox Short-Lived Token': r'(?i)dropbox[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{64,})',
+
+# ============================================
+# Box
+# ============================================
+'Box Access Token': r'(?i)box[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{32})',
+
+# ============================================
+# Salesforce
+# ============================================
+'Salesforce Access Token': r'00D[a-zA-Z0-9]{15}![A-Za-z0-9_.]{80,}',
+'Salesforce Refresh Token': r'5Aep861[A-Za-z0-9._]{80,}',
+
+# ============================================
+# SAP
+# ============================================
+'SAP API Key': r'(?i)sap[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{32})',
+
+# ============================================
+# Fastly
+# ============================================
+'Fastly API Key': r'(?i)fastly[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{32})',
+
+# ============================================
+# Cloudinary
+# ============================================
+'Cloudinary URL': r'cloudinary://[0-9]+:[A-Za-z0-9_-]+@[a-z0-9-]+',
+
+# ============================================
+# Minified JS / CamelCase Patterns (Service-specific only)
+'JS stripeKey': r'["\']?stripeKey["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
+'JS stripeSecret': r'["\']?stripeSecret["\']?\s*[,:]\s*["\']([A-Za-z0-9_-]{20,})["\']',
+'JS awsAccessKey': r'["\']?awsAccessKey(?:Id)?["\']?\s*[,:]\s*["\']([A-Z0-9]{20})["\']',
+'JS awsSecretKey': r'["\']?awsSecretKey["\']?\s*[,:]\s*["\']([A-Za-z0-9/+=]{40})["\']',
+'JS googleApiKey': r'["\']?googleApiKey["\']?\s*[,:]\s*["\'](AIza[A-Za-z0-9_-]{35})["\']',
+'JS firebaseApiKey': r'["\']?firebaseApiKey["\']?\s*[,:]\s*["\'](AIza[A-Za-z0-9_-]{35})["\']',
+'JS twilioAccountSid': r'["\']?twilioAccountSid["\']?\s*[,:]\s*["\'](AC[a-f0-9]{32})["\']',
+'JS twilioAuthToken': r'["\']?twilioAuthToken["\']?\s*[,:]\s*["\']([a-f0-9]{32})["\']',
+'JS sendgridApiKey': r'["\']?sendgridApiKey["\']?\s*[,:]\s*["\'](SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})["\']',
+'JS slackToken': r'["\']?slackToken["\']?\s*[,:]\s*["\'](xox[bpas]-[A-Za-z0-9-]+)["\']',
+'JS githubToken': r'["\']?githubToken["\']?\s*[,:]\s*["\'](ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]+)["\']',
+'JS discordToken': r'["\']?discordToken["\']?\s*[,:]\s*["\']([MN][A-Za-z0-9]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27})["\']',
+'JS openaiApiKey': r'["\']?openaiApiKey["\']?\s*[,:]\s*["\'](sk-[A-Za-z0-9]{48})["\']',
+'JS anthropicApiKey': r'["\']?anthropicApiKey["\']?\s*[,:]\s*["\'](sk-ant-[A-Za-z0-9_-]+)["\']',
+
+# ============================================
+# NEW HIGH PRIORITY PATTERNS (2025)
+# ============================================
+
+# --------------------------------------------
+# Cloud/DevOps Infrastructure
+# --------------------------------------------
+'Terraform Cloud Token': r'[a-zA-Z0-9]{14}\.atlasv1\.[a-zA-Z0-9_-]{60,}',
+'Docker Hub Personal Access Token': r'dckr_pat_[A-Za-z0-9_-]{27,}',
+'Kubernetes Service Account Token': r'eyJhbGciOi[A-Za-z0-9_-]+\.eyJpc3MiOiJrdWJlcm5ldGVz[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+'Linode API Token': r'(?i)linode[_-]?(?:api)?[_-]?(?:token|key)[\'"\s]*[:=][\'"\s]*([0-9a-f]{64})',
+'Vultr API Key': r'(?i)vultr[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([A-Z0-9]{36})',
+
+# --------------------------------------------
+# AI/ML Services (Growing Fast in 2025)
+# --------------------------------------------
+'Hugging Face Token': r'hf_[a-zA-Z0-9]{34,}',
+'Replicate API Token': r'r8_[a-zA-Z0-9]{40,}',
+'Cohere API Key': r'(?i)cohere[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{40})',
+'Together AI Key': r'(?i)together[_-]?(?:ai)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{64})',
+
+# --------------------------------------------
+# CI/CD Systems
+# --------------------------------------------
+'GitLab CI Job Token': r'glcbt-[A-Za-z0-9]{20,}',
+'Bitbucket App Password': r'ATBB[a-zA-Z0-9]{32,}',
+'Bitbucket Access Token': r'(?i)bitbucket[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{20,})',
+'Drone CI Token': r'(?i)drone[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9_-]{32,})',
+
+# --------------------------------------------
+# Payment Processors (International)
+# --------------------------------------------
+'Razorpay Key ID': r'rzp_(?:live|test)_[a-zA-Z0-9]{14,}',
+'Razorpay Key Secret': r'(?i)razorpay[_-]?(?:key)?[_-]?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9]{20,})',
+# FIXED: AQE is common in base64, require 'adyen' context to avoid false positives
+'Adyen API Key': r'(?i)adyen[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*(AQE[a-zA-Z0-9_-]{40,})',
+# FIXED: Use negative lookbehind to avoid matching Stripe keys (pk_live_, sk_live_, etc.)
+'Mollie API Key': r'(?<![a-zA-Z_])(?:live|test)_[a-zA-Z0-9]{30,}',
+'Wise API Token': r'(?i)(?:wise|transferwise)[_-]?(?:api)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+'Flutterwave Secret Key': r'FLWSECK(?:_TEST)?-[a-zA-Z0-9]{32,}',
+'Paystack Secret Key': r'sk_(?:live|test)_[a-zA-Z0-9]{40,}',
+
+# --------------------------------------------
+# Communication Platforms
+# --------------------------------------------
+'Microsoft Teams Webhook': r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-zA-Z0-9-]+/IncomingWebhook/[a-zA-Z0-9]+/[a-zA-Z0-9-]+',
+'Mattermost Webhook': r'https://[a-zA-Z0-9.-]+/hooks/[a-zA-Z0-9]+',
+'Rocket.Chat Token': r'(?i)rocketchat[_-]?(?:auth)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Databases (Additional)
+# --------------------------------------------
+'CockroachDB Connection String': r'cockroachdb://[^\s\'"<>]+',
+'InfluxDB Token': r'(?i)influx(?:db)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_=-]{80,})',
+# FIXED: 'fn' is extremely common in minified JS, require 'fauna' context
+'Fauna Secret Key': r'(?i)fauna[_-]?(?:secret)?[_-]?(?:key)?[\'"\s]*[:=][\'"\s]*(fn[a-zA-Z0-9_-]{40,})',
+'PlanetScale Token': r'pscale_tkn_[a-zA-Z0-9_-]{40,}',
+'PlanetScale OAuth Token': r'pscale_oauth_[a-zA-Z0-9_-]{40,}',
+'Neon Database Token': r'(?i)neon[_-]?(?:db)?[_-]?(?:api)?[_-]?(?:key|token)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{60,})',
+'Supabase Service Role Key': r'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+',
+'Upstash Redis Token': r'(?i)upstash[_-]?(?:redis)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_=-]{40,})',
+
+# --------------------------------------------
+# Social Media APIs
+# --------------------------------------------
+'TikTok Access Token': r'(?i)tiktok[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{60,})',
+'Reddit Client Secret': r'(?i)reddit[_-]?(?:client)?[_-]?secret[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{22,})',
+'Pinterest Access Token': r'(?i)pinterest[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Enterprise/B2B
+# --------------------------------------------
+'ServiceNow Credentials': r'(?i)servicenow[_-]?(?:password|secret|token)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_!@#$%^&*-]{8,})',
+'Workday API Token': r'(?i)workday[_-]?(?:api)?[_-]?(?:token|key)[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# --------------------------------------------
+# Additional Cloud Providers
+# --------------------------------------------
+'Oracle Cloud API Key': r'(?i)oracle[_-]?(?:cloud)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+'IBM Cloud API Key': r'(?i)ibm[_-]?(?:cloud)?[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-zA-Z0-9_-]{40,})',
+
+# ============================================
+# GENERIC KEYWORD PATTERNS (saved to passwords.json)
+# ============================================
+# These catch any *key*, *secret*, *token*, etc. patterns
+# Prefix with "Generic:" to route to passwords.json
+# Patterns match both JS (key: "value") and JSON ("key":"value") formats
+
+# Password patterns (most important)
+'Generic:password': r'(?i)["\']?[a-zA-Z0-9_-]*password[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:passwd': r'(?i)["\']?[a-zA-Z0-9_-]*passwd["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:pass': r'(?i)["\']?[a-zA-Z0-9_-]*_pass["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:pwd': r'(?i)["\']?[a-zA-Z0-9_-]*pwd["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+
+# Username patterns
+'Generic:username': r'(?i)["\']?[a-zA-Z0-9_-]*user[_-]?name[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+'Generic:login': r'(?i)["\']?[a-zA-Z0-9_-]*login[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{3,})["\']',
+
+# Credential patterns
+'Generic:credential': r'(?i)["\']?[a-zA-Z0-9_-]*credential[s]?["\']?\s*[:=]\s*\[?\s*["\']([^"\']{3,})["\']',
+'Generic:demo_credentials': r'(?i)["\']?demo[_-]?credentials["\']?\s*[:=]\s*\[\s*["\']([^"\']+)["\']\s*,\s*["\']([^"\']+)["\']',
+
+# API patterns
+'Generic:api_key': r'(?i)["\']?[a-zA-Z0-9_-]*api[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:apikey': r'(?i)["\']?apikey["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:api_secret': r'(?i)["\']?[a-zA-Z0-9_-]*api[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Key patterns
+'Generic:secret_key': r'(?i)["\']?[a-zA-Z0-9_-]*secret[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:private_key': r'(?i)["\']?[a-zA-Z0-9_-]*private[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:access_key': r'(?i)["\']?[a-zA-Z0-9_-]*access[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:auth_key': r'(?i)["\']?[a-zA-Z0-9_-]*auth[_-]?key[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Secret patterns
+'Generic:secret': r'(?i)["\']?[a-zA-Z0-9_-]*secret["\']?\s*[:=]\s*["\']([^"\']{6,})["\']',
+'Generic:app_secret': r'(?i)["\']?[a-zA-Z0-9_-]*app[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:client_secret': r'(?i)["\']?[a-zA-Z0-9_-]*client[_-]?secret[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Token patterns
+'Generic:token': r'(?i)["\']?[a-zA-Z0-9_-]*token["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:access_token': r'(?i)["\']?[a-zA-Z0-9_-]*access[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:refresh_token': r'(?i)["\']?[a-zA-Z0-9_-]*refresh[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:auth_token': r'(?i)["\']?[a-zA-Z0-9_-]*auth[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:bearer_token': r'(?i)["\']?[a-zA-Z0-9_-]*bearer[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:session_token': r'(?i)["\']?[a-zA-Z0-9_-]*session[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+'Generic:register_token': r'(?i)["\']?[a-zA-Z0-9_-]*register[_-]?token[a-zA-Z0-9_-]*["\']?\s*[:=]\s*["\']([^"\']{16,})["\']',
+
+# Auth patterns
+'Generic:auth': r'(?i)["\']?[a-zA-Z0-9_-]*auth["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+'Generic:authorization': r'(?i)["\']?authorization["\']?\s*[:=]\s*["\']([^"\']{8,})["\']',
+
+# Connection strings
+'Generic:connection_string': r'(?i)["\']?[a-zA-Z0-9_-]*connection[_-]?string["\']?\s*[:=]\s*["\']([^"\']{20,})["\']',
+'Generic:database_url': r'(?i)["\']?[a-zA-Z0-9_-]*database[_-]?url["\']?\s*[:=]\s*["\']([^"\']{15,})["\']',
+
+
