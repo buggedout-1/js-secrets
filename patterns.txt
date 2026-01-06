@@ -456,11 +456,8 @@
 # Mixpanel
 # ============================================
 'Mixpanel Project Token': r'(?i)mixpanel[_-]?(?:project)?[_-]?token[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
+# ============================================
 
-# ============================================
-# Amplitude
-# ============================================
-'Amplitude API Key': r'(?i)amplitude[_-]?(?:api)?[_-]?key[\'"\s]*[:=][\'"\s]*([a-f0-9]{32})',
 
 # ============================================
 # Segment
@@ -504,13 +501,6 @@
 # Box
 # ============================================
 'Box Access Token': r'(?i)box[_-]?(?:access)?[_-]?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9]{32})',
-
-# ============================================
-# OneDrive/Microsoft Graph
-# ============================================
-# FIXED: 'EwB' prefix (3 chars) with no min length matched minified JS vars
-# Now requires minimum 50 characters after prefix
-'Microsoft Graph Access Token': r'EwB[A-Za-z0-9_-]{50,}',
 
 # ============================================
 # Salesforce
