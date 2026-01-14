@@ -221,7 +221,6 @@
 # ============================================
 # Mapbox
 # ============================================
-'Mapbox Access Token': r'pk\.[a-zA-Z0-9]{60,}\.[a-zA-Z0-9]{20,}',
 'Mapbox Secret Token': r'sk\.[a-zA-Z0-9]{60,}\.[a-zA-Z0-9]{20,}',
 
 # ============================================
@@ -675,6 +674,7 @@
 # Connection strings
 'Generic:connection_string': r'(?i)["\']?[a-zA-Z0-9_-]*connection[_-]?string["\']?\s*[:=]\s*["\']([^"\']{20,})["\']',
 'Generic:database_url': r'(?i)["\']?[a-zA-Z0-9_-]*database[_-]?url["\']?\s*[:=]\s*["\']([^"\']{15,})["\']',
+
 
 
 
