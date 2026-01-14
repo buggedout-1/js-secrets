@@ -6,6 +6,7 @@
 # Now requires 'aws' OR 'secret_access_key' context
 'AWS Secret Access Key': r'(?i)(?:aws[_-]?(?:secret[_-]?)?(?:access[_-]?)?key|secret[_-]?access[_-]?key)[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{40})',
 'AWS Session Token': r'(?i)(?:aws)?_?session_?token[\'"\s]*[:=][\'"\s]*([A-Za-z0-9/+=]{100,})',
+'AWS S3 Bucket': r'[a-zA-Z0-9._-]+\.s3(-[a-z0-9-]+)?\.amazonaws\.com',
 'AWS ARN': r'arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:[a-zA-Z0-9-_/]+',
 
 # ============================================
@@ -674,5 +675,6 @@
 # Connection strings
 'Generic:connection_string': r'(?i)["\']?[a-zA-Z0-9_-]*connection[_-]?string["\']?\s*[:=]\s*["\']([^"\']{20,})["\']',
 'Generic:database_url': r'(?i)["\']?[a-zA-Z0-9_-]*database[_-]?url["\']?\s*[:=]\s*["\']([^"\']{15,})["\']',
+
 
 
