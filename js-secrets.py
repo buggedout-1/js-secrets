@@ -10,6 +10,8 @@ import urllib3
 from colorama import Fore, Style, init
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from multiprocessing import Process, Queue as MPQueue
+
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -389,6 +391,31 @@ def extract_secrets(page_content):
 
     return secrets_found, generic_found
 
+def _extract_worker(page_content, result_queue):
+    """Worker for multiprocessing timeout."""
+    try:
+        result = extract_secrets(page_content)
+        result_queue.put(result)
+    except:
+        result_queue.put(None)
+
+def run_extract_with_timeout(page_content, timeout=15):
+    """Run extract_secrets with timeout - kills if stuck."""
+    result_queue = MPQueue()
+    process = Process(target=_extract_worker, args=(page_content, result_queue), daemon=True)
+    process.start()
+    process.join(timeout=timeout)
+
+    if process.is_alive():
+        process.terminate()
+        process.join(1)
+        return None
+
+    try:
+        return result_queue.get_nowait()
+    except:
+        return None
+
 def scan_url(url, current_index, total_urls):
     try:
         sys.stdout.write(f"\rLoading URL {current_index} of {total_urls}...")
@@ -397,7 +424,12 @@ def scan_url(url, current_index, total_urls):
         response = requests.get(url, timeout=15, verify=False)
         if response.status_code == 200:
             page_content = response.text
-            secrets, generic = extract_secrets(page_content)
+
+            # Run extract_secrets with 15 sec timeout
+            result = run_extract_with_timeout(page_content, timeout=15)
+            if result is None:
+                return None
+            secrets, generic = result
 
             result = {'url': url}
             has_findings = False
@@ -411,8 +443,8 @@ def scan_url(url, current_index, total_urls):
 
             if has_findings:
                 return result
-    except requests.exceptions.RequestException as e:
-        print(Fore.RED + f"\n[!] Error fetching {url}: {e}")
+    except requests.exceptions.RequestException:
+        pass
     return None
 
 def save_results(results):
