@@ -403,7 +403,7 @@
 # ============================================
 # Airtable
 # ============================================
-'Airtable API Key': r'["\']?(key[A-Za-z0-9]{14})["\']',
+'Airtable API Key': r'["\']?(key(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{14})["\']',
 'Airtable Personal Access Token': r'pat[A-Za-z0-9]{14}\.[a-f0-9]{64}',
 
 # ============================================
@@ -674,6 +674,7 @@
 # Connection strings
 'Generic:connection_string': r'(?i)["\']?[a-zA-Z0-9_-]*connection[_-]?string["\']?\s*[:=]\s*["\']([^"\']{20,})["\']',
 'Generic:database_url': r'(?i)["\']?[a-zA-Z0-9_-]*database[_-]?url["\']?\s*[:=]\s*["\']([^"\']{15,})["\']',
+
 
 
 
